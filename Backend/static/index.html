@@ -1,0 +1,260 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Запись в отделение</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            background: #f5f5f5;
+            color: #222;
+            padding: 20px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+        }
+
+        .card {
+            background: #fff;
+            border-radius: 16px;
+            padding: 32px;
+            width: 100%;
+            max-width: 420px;
+            box-shadow: 0 4px 24px rgba(0,0,0,0.08);
+        }
+
+        h1 {
+            font-size: 22px;
+            margin-bottom: 8px;
+            color: #0039a6;  /* фирменный синий Почты России */
+        }
+
+        .subtitle {
+            font-size: 14px;
+            color: #666;
+            margin-bottom: 24px;
+        }
+
+        label {
+            display: block;
+            font-size: 13px;
+            color: #555;
+            margin-bottom: 6px;
+            margin-top: 16px;
+        }
+
+        input, select {
+            width: 100%;
+            padding: 12px 14px;
+            font-size: 15px;
+            border: 1px solid #ddd;
+            border-radius: 10px;
+            background: #fafafa;
+            outline: none;
+            transition: border-color 0.15s;
+        }
+
+        input:focus, select:focus {
+            border-color: #0039a6;
+            background: #fff;
+        }
+
+        button {
+            width: 100%;
+            padding: 14px;
+            font-size: 16px;
+            font-weight: 600;
+            color: #fff;
+            background: #0039a6;
+            border: none;
+            border-radius: 10px;
+            cursor: pointer;
+            margin-top: 24px;
+            transition: background 0.15s;
+        }
+
+        button:hover:not(:disabled) { background: #002d85; }
+        button:disabled { background: #999; cursor: not-allowed; }
+
+        .result {
+            margin-top: 20px;
+            padding: 16px;
+            border-radius: 10px;
+            font-size: 14px;
+            display: none;
+        }
+
+        .result.success {
+            background: #e8f5e9;
+            border: 1px solid #a5d6a7;
+            color: #1b5e20;
+            display: block;
+        }
+
+        .result.error {
+            background: #ffebee;
+            border: 1px solid #ef9a9a;
+            color: #b71c1c;
+            display: block;
+        }
+
+        .result .code {
+            font-size: 28px;
+            font-weight: 700;
+            margin: 8px 0;
+            letter-spacing: 2px;
+        }
+    </style>
+</head>
+<body>
+
+<div class="card">
+    <h1>Запись в отделение</h1>
+    <p class="subtitle">Выберите отделение и удобное время</p>
+
+    <label for="branch">Отделение</label>
+    <select id="branch"></select>
+
+    <label for="service">Услуга</label>
+    <select id="service">
+        <option value="1">Выдача пенсии</option>
+        <option value="2">Приём платежей</option>
+        <option value="3">Отправка посылки</option>
+    </select>
+
+    <label for="when">Дата и время</label>
+    <input type="datetime-local" id="when">
+
+    <button id="submit" onclick="submitForm()">Записаться</button>
+
+    <div class="result" id="result"></div>
+</div>
+
+<script>
+    // Адрес backend. Если страница открыта через uvicorn — тот же хост.
+    // Если открыта как файл (file://) — надо указать полный URL.
+    const API = window.location.protocol === 'file:'
+        ? 'http://localhost:8000'
+        : '';
+
+    // Загружаем отделения при открытии страницы.
+    async function loadBranches() {
+        const select = document.getElementById('branch');
+        try {
+            const res = await fetch(API + '/api/branches');
+            const branches = await res.json();
+
+            select.innerHTML = '';
+            if (branches.length === 0) {
+                const opt = document.createElement('option');
+                opt.value = '';
+                opt.textContent = '— нет отделений, создайте через /docs —';
+                select.appendChild(opt);
+                return;
+            }
+
+            for (const b of branches) {
+                const opt = document.createElement('option');
+                opt.value = b.id;
+                opt.textContent = b.name;
+                select.appendChild(opt);
+            }
+        } catch (e) {
+            select.innerHTML = '<option value="">Ошибка загрузки</option>';
+            console.error(e);
+        }
+    }
+
+    // Устанавливаем дефолтное время — через час.
+    function setDefaultTime() {
+        const d = new Date();
+        d.setHours(d.getHours() + 1);
+        d.setMinutes(0);
+        // Формат для datetime-local: YYYY-MM-DDTHH:MM
+        const pad = (n) => String(n).padStart(2, '0');
+        const value = `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+        document.getElementById('when').value = value;
+    }
+
+    // Отправка формы.
+    async function submitForm() {
+    const btn = document.getElementById('submit');
+    const result = document.getElementById('result');
+    result.className = 'result';
+    result.textContent = '';
+
+    const branchId = parseInt(document.getElementById('branch').value);
+    const serviceId = parseInt(document.getElementById('service').value);
+    const when = document.getElementById('when').value;
+
+    if (!branchId) {
+        showError('Выберите отделение');
+        return;
+    }
+    if (!when) {
+        showError('Укажите дату и время');
+        return;
+    }
+
+    btn.disabled = true;
+    btn.textContent = 'Отправка...';
+
+    try {
+        const res = await fetch(API + '/api/tickets', {          // ← ИЗМЕНИЛИ URL
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                branch_id: branchId,
+                service_id: serviceId,
+                source: 'appointment',                            // ← ДОБАВИЛИ source
+                scheduled_at: when + ':00',
+            }),
+        });
+
+        if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            showError('Ошибка: ' + (err.detail || res.status));
+            return;
+        }
+
+        const ticket = await res.json();
+        showSuccess(ticket);
+    } catch (e) {
+        showError('Сеть недоступна: ' + e.message);
+    } finally {
+        btn.disabled = false;
+        btn.textContent = 'Записаться';
+    }
+}
+    function showSuccess(ticket) {
+        const result = document.getElementById('result');
+        result.className = 'result success';
+        result.innerHTML = `
+            <div>Вы записаны!</div>
+            <div class="code">${ticket.public_code}</div>
+            <div>Отделение: ${ticket.branch_id}, услуга: ${ticket.service_id}</div>
+            <div>На время: ${new Date(ticket.scheduled_at).toLocaleString('ru-RU')}</div>
+            <div style="margin-top:8px;font-size:12px;color:#555">
+                Статус: ${ticket.status} · ID талона: ${ticket.id}
+            </div>
+        `;
+    }
+
+    function showError(msg) {
+        const result = document.getElementById('result');
+        result.className = 'result error';
+        result.textContent = msg;
+    }
+
+    // Инициализация
+    loadBranches();
+    setDefaultTime();
+</script>
+</body>
+</html>
