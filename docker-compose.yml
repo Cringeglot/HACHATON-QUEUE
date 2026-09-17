@@ -1,0 +1,39 @@
+
+services:
+  # Наш бэкенд на FastAPI
+  api:
+    build: ./backend
+    container_name: esuo_api
+    ports:
+      - "8000:8000"
+    environment:
+      - DATABASE_URL=postgresql://user:password@db:5432/esuo_db
+      - REDIS_URL=redis://cache:6379/0
+    depends_on:
+      - db
+      - cache
+    volumes:
+      - ./backend:/app # Чтобы код обновлялся без перезапуска контейнера
+
+  # База данных PostgreSQL
+  db:
+    image: postgres:15-alpine
+    container_name: esuo_db
+    environment:
+      - POSTGRES_USER=user
+      - POSTGRES_PASSWORD=password
+      - POSTGRES_DB=esuo_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  # Redis для очередей и защиты от двойного вызова
+  cache:
+    image: redis:alpine
+    container_name: esuo_redis
+    ports:
+      - "6379:6379"
+
+volumes:
+  postgres_data:

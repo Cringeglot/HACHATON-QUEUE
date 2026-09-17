@@ -1,0 +1,157 @@
+Шаг 2. Создаем модели базы данных (models.py)
+Чтобы алгоритм мог работать с реальными талонами, нам нужно описать их структуру в PostgreSQL.
+
+Создай файл backend/app/db/models.py
+import enum
+from datetime import datetime, timezone
+from sqlalchemy import Column, Integer, String, DateTime, Enum, ForeignKey, Text
+from sqlalchemy.orm import declarative_base, relationship
+
+Base = declarative_base()
+
+class TicketSource(str, enum.Enum):
+    PRE_REGISTRATION = "pre_registration" # Предварительная запись
+    QR = "qr"                             # По QR-коду
+    LIVE = "live"                         # Живая очередь
+
+class TicketStatus(str, enum.Enum):
+    WAITING = "waiting"       # Ожидает в очереди
+    CALLED = "called"         # Вызван к окну
+    IN_PROGRESS = "in_progress" # Обслуживается
+    COMPLETED = "completed"   # Обслуживание завершено
+    CANCELED = "canceled"     # Отменен
+    NO_SHOW = "no_show"       # Не явился
+
+class Ticket(Base):
+    __tablename__ = "tickets"
+
+    id = Column(Integer, primary_key=True, index=True)
+    ticket_number = Column(String(10), nullable=False) # Например, "A012" или "П105"
+    service_id = Column(Integer, nullable=False, index=True)
+    source = Column(Enum(TicketSource), nullable=False)
+    status = Column(Enum(TicketStatus), default=TicketStatus.WAITING, nullable=False)
+    
+    # К какому окну привязан (если вызван/обслуживается)
+    window_id = Column(Integer, nullable=True)
+    
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+
+# Журнал событий (обязательное требование задания!)
+class TicketLog(Base):
+    __tablename__ = "ticket_logs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    ticket_id = Column(Integer, ForeignKey("tickets.id"), nullable=False)
+    old_status = Column(String(50), nullable=True)
+    new_status = Column(String(50), nullable=False)
+    comment = Column(Text, nullable=True) # Например: "Окно закрыто, возврат в очередь"
+    timestamp = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+
+Шаг 3. Дорабатываем алгоритм с защитой от "двойного вызова" и журналом
+Теперь объединим твой алгоритм с работой БД, добавив 3 обязательные вещи из задания:
+
+Защиту от двойного вызова (используем with_for_update(skip_locked=True)).
+
+Логику закрытия окна (перевод талона обратно в очередь).
+
+Логирование событий (запись в ticket_logs).
+
+Обнови файл backend/app/services/queue_service.py:
+
+from datetime import datetime, timezone
+from sqlalchemy.orm import Session
+from app.core.config import QueueSettings
+from app.db.models import Ticket, TicketStatus, TicketSource, TicketLog
+
+def calculate_ticket_score(ticket: Ticket, current_time: datetime) -> float:
+    """Считает приоритет талона."""
+    if ticket.source == TicketSource.PRE_REGISTRATION:
+        base_score = QueueSettings.PRIORITY_PRE_REGISTRATION
+    elif ticket.source == TicketSource.QR:
+        base_score = QueueSettings.PRIORITY_QR
+    else:
+        base_score = QueueSettings.PRIORITY_LIVE
+
+    # Считаем время ожидания в минутах
+    wait_time_minutes = (current_time - ticket.created_at).total_seconds() / 60
+    bonus_score = wait_time_minutes * QueueSettings.WAIT_TIME_MULTIPLIER
+
+    return base_score + bonus_score
+
+def log_event(db: Session, ticket_id: int, old_status: str, new_status: str, comment: str = None):
+    """Фиксирует любое изменение талона в журнале событий."""
+    log = TicketLog(
+        ticket_id=ticket_id,
+        old_status=old_status,
+        new_status=new_status,
+        comment=comment
+    )
+    db.add(log)
+
+def call_next_client(db: Session, service_id: int, window_id: int) -> Ticket | None:
+    """
+    Вызывает следующего клиента.
+    Использует FOR UPDATE SKIP LOCKED для защиты от одновременного вызова двумя окнами.
+    """
+    current_time = datetime.now(timezone.utc)
+
+    # 1. Блокируем строки ожидающих талонов в базе данных, чтобы другое окно не забрало их
+    waiting_tickets = (
+        db.query(Ticket)
+        .filter(Ticket.service_id == service_id, Ticket.status == TicketStatus.WAITING)
+        .with_for_update(skip_locked=True) 
+        .all()
+    )
+
+    if not waiting_tickets:
+        return None
+
+    # 2. Находим самого приоритетного клиента
+    best_ticket = max(
+        waiting_tickets,
+        key=lambda t: (calculate_ticket_score(t, current_time), -t.created_at.timestamp())
+    )
+
+    # 3. Меняем статус и привязываем к окну
+    old_status = best_ticket.status
+    best_ticket.status = TicketStatus.CALLED
+    best_ticket.window_id = window_id
+
+    # 4. Пишем в лог и сохраняем атомарно
+    log_event(db, best_ticket.id, old_status, TicketStatus.CALLED, f"Вызван в окно №{window_id}")
+    db.commit()
+    db.refresh(best_ticket)
+
+    return best_ticket
+
+def handle_window_close(db: Session, window_id: int):
+    """
+    Обработка закрытия окна с активным клиентом.
+    Возвращает незавершенного клиента обратно в очередь.
+    """
+    active_ticket = (
+        db.query(Ticket)
+        .filter(
+            Ticket.window_id == window_id,
+            Ticket.status.in_([TicketStatus.CALLED, TicketStatus.IN_PROGRESS])
+        )
+        .first()
+    )
+
+    if active_ticket:
+        old_status = active_ticket.status
+        active_ticket.status = TicketStatus.WAITING
+        active_ticket.window_id = None # Отвязываем от окна
+        
+        log_event(
+            db, 
+            active_ticket.id, 
+            old_status, 
+            TicketStatus.WAITING, 
+            f"Окно №{window_id} закрылось. Талон возвращен в очередь."
+        )
+        db.commit()
+        return active_ticket
+    return None
