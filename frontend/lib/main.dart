@@ -25,8 +25,18 @@ void main() async {
       GoRoute(
         path: '/booking',
         builder: (context, state) {
-          final serviceName = state.extra as String? ?? 'Неизвестная услуга';
-          return BookingScreen(serviceName: serviceName);
+          // Принимаем словарь с данными вместо одиночной строки
+          final extra = state.extra as Map<String, dynamic>?;
+
+          final serviceName = extra?['serviceName']?.toString() ?? 'Неизвестная услуга';
+          final serviceId = extra?['serviceId']?.toString() ?? 's1';
+          final branchId = extra?['branchId']?.toString() ?? '101000';
+
+          return BookingScreen(
+            serviceName: serviceName,
+            serviceId: serviceId,
+            branchId: branchId,
+          );
         },
       ),
       GoRoute(

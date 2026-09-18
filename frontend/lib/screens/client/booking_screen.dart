@@ -6,7 +6,15 @@ import '../../core/api_client.dart';
 
 class BookingScreen extends StatefulWidget {
   final String serviceName;
-  const BookingScreen({super.key, required this.serviceName});
+  final String serviceId; // Добавлено: идентификатор услуги
+  final String branchId;  // Добавлено: идентификатор отделения
+
+  const BookingScreen({
+    super.key, 
+    required this.serviceName,
+    required this.serviceId,
+    required this.branchId,
+  });
 
   @override
   State<BookingScreen> createState() => _BookingScreenState();
@@ -48,7 +56,16 @@ Future<void> _createBooking() async {
   setState(() => isBooking = true);
 
   final formattedDate = DateFormat('yyyy-MM-dd').format(selectedDate);
-  final result = await ApiClient().createBooking(formattedDate, selectedTime!, 's1');
+  
+  // Заменяем хардкод 's1' на динамические параметры.
+  // Внимание: не забудьте обновить сигнатуру createBooking в ApiClient, 
+  // чтобы она принимала branchId.
+  final result = await ApiClient().createBooking(
+    formattedDate, 
+    selectedTime!, 
+    widget.serviceId, 
+    widget.branchId, 
+  );
 
   if (!mounted) return;
 

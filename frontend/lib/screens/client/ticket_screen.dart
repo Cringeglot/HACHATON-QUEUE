@@ -29,6 +29,7 @@ class _TicketScreenState extends State<TicketScreen> {
   late String _activeClientToken;
 
   WebSocketChannel? _wsChannel;
+  StreamSubscription? _wsSubscription;
   Timer? _fallbackTimer;
   Timer? _wsReconnectTimer;
 
@@ -82,14 +83,15 @@ class _TicketScreenState extends State<TicketScreen> {
       final wsBase = AppConfig.wsBaseUrl;
       final wsUrl = Uri.parse('$wsBase/ws/tickets/$_activeTicketId?token=$_activeClientToken');
       
+      _wsSubscription?.cancel();
       _wsChannel?.sink.close();
       _wsChannel = WebSocketChannel.connect(wsUrl);
 
-      _wsChannel!.stream.listen(
+      _wsSubscription = _wsChannel!.stream.listen(
         (message) {
           if (!_isWsConnected) {
             _isWsConnected = true;
-            _stopFallbackPolling(); // WS заработал — отключаем поллинг
+            _stopFallbackPolling();
           }
           final data = jsonDecode(message);
           _updateTicketFromData(data);
@@ -138,6 +140,7 @@ class _TicketScreenState extends State<TicketScreen> {
 
   @override
   void dispose() {
+    _wsSubscription?.cancel();
     _wsChannel?.sink.close();
     _fallbackTimer?.cancel();
     _wsReconnectTimer?.cancel();
@@ -186,7 +189,7 @@ class _TicketScreenState extends State<TicketScreen> {
     }
   }
 
-  Future<void> _fetchTicketStatus() async {
+   Future<void> _fetchTicketStatus() async {
     if (_activeTicketId.isEmpty) return;
 
     final updatedTicket = await _apiClient.getTicketStatus(
@@ -198,11 +201,19 @@ class _TicketScreenState extends State<TicketScreen> {
 
     if (updatedTicket != null) {
       _updateTicketFromData(updatedTicket.toJson());
-    } else if (_isLoading) {
-      setState(() {
-        _isLoading = false;
-        _errorMessage = 'Не удалось загрузить данные талона';
-      });
+    } else {
+      // Если бэкенд не вернул данные (битая сессия / талон удален), 
+      // сбрасываем кэш и отправляем на главную.
+      _wsSubscription?.cancel();
+      _wsChannel?.sink.close();
+      _stopFallbackPolling();
+      _wsReconnectTimer?.cancel();
+      
+      await SessionStorage.clearSession();
+      
+      if (mounted) {
+        context.go('/');
+      }
     }
   }
 

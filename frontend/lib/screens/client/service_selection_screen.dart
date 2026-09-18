@@ -85,9 +85,15 @@ class _ServiceSelectionScreenState extends State<ServiceSelectionScreen> {
                       title: Text(service['name']!, style: const TextStyle(fontWeight: FontWeight.w500)),
                       trailing: const Icon(Icons.arrow_forward_ios, size: 16),
                       onTap: () {
-                        // Передаем название услуги дальше (в идеале нужно передавать еще и ID отделения)
-                        context.push('/booking', extra: service['name']);
-                      },
+                          context.push(
+                          '/booking',
+                          extra: {
+                          'serviceName': service['name']!,
+                          'serviceId': service['id']!,
+                          'branchId': _selectedBranchId!,
+                              },
+                            );
+                         },
                     ),
                   )),
                 ] else ...[

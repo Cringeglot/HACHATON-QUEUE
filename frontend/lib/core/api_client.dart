@@ -19,7 +19,7 @@ class ApiClient {
   final bool _useMock = true;
 
   // 1. Создание записи (предварительная запись)
-  Future<Map<String, String>?> createBooking(String date, String time, String serviceId) async {
+  Future<Map<String, String>?> createBooking(String date, String time, String serviceId, String branchId) async {
     if (_useMock) {
       await Future.delayed(const Duration(seconds: 1));
       return {
