@@ -7,13 +7,14 @@ from datetime import datetime
 
 from app import auth
 
-from app.auth import get_current_user
+from app.auth import get_current_user, require_role
 
 from fastapi import FastAPI, Depends, HTTPException
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from sqlalchemy import select, func
 from sqlalchemy.orm import Session
+from starlette import status 
 
 from app.db import Base, engine, get_db, SessionLocal
 from app.models import Branch, Window, Ticket, TicketLog
@@ -21,7 +22,10 @@ from app import queue as q
 
 
 app = FastAPI(title="E-Queue MVP", version="0.1.0")
-
+CLIENT_ROLE = 0
+OPERATOR_ROLE = 1
+DIRECTOR_ROLE = 2
+ADMIN_ROLE = 3
 app.include_router(auth.router)
 @app.get("/")
 async def user(user: dict = Depends(get_current_user), db: Session = Depends(get_db)):
@@ -34,7 +38,7 @@ async def user(user: dict = Depends(get_current_user), db: Session = Depends(get
 def on_startup():
     """Создаём таблицы и наполняем справочники, если пусто."""
     Base.metadata.create_all(bind=engine)
-   # Base.metadata.drop_all(bind=engine)
+    # Base.metadata.drop_all(bind=engine)
     db = SessionLocal()
     try:
         if db.query(Branch).count() == 0:
@@ -88,7 +92,7 @@ def health():
 # ---------------------------------------------------------------------------
 
 @app.post("/api/tickets", tags=["tickets"])
-def create_ticket(payload: TicketCreate, db: Session = Depends(get_db)):
+def create_ticket(payload: TicketCreate, db: Session = Depends(get_db),  user: dict = Depends(require_role(CLIENT_ROLE))):
     """Создать талон. source определяет способ входа."""
     status = "scheduled" if payload.source == "appointment" else "waiting"
 

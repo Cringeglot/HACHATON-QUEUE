@@ -28,6 +28,7 @@ class User(Base):
     __tablename__ = 'users'
 
     id = Column(Integer, primary_key=True)
+    role = Column(Integer)
     username = Column(String(50), unique=True)
     hashed_password = Column(String(100))
 
@@ -58,7 +59,6 @@ class Ticket(Base):
     window_id = Column(Integer, nullable=True)
     scheduled_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), default=utcnow, nullable=False)
-
 
 class TicketLog(Base):
     """Append-only журнал событий талона."""

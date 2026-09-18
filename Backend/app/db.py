@@ -19,7 +19,6 @@ DATABASE_URL = os.getenv(
     "postgresql+psycopg://queue:queue@localhost:5432/queue",
 )
 
-
 class Base(DeclarativeBase):
     pass
 
