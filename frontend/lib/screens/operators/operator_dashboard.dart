@@ -11,22 +11,22 @@ class OperatorDashboard extends StatefulWidget {
 class _OperatorDashboardState extends State<OperatorDashboard> {
   bool isWindowOpen = true;
   final int windowNumber = 3;
+  String currentSourceType = 'APPOINTMENT';
 
   Ticket? currentTicket = Ticket(
     id: '1',
     number: 'A-042',
-    sourceType: 'BOOKING',
     status: 'WAITING',
-    serviceId: 'service_1',
-    windowNumber: 3,
-    clientToken: 'token_123',
-    createdAt: '2026-09-17T10:00:00Z',
     estimatedWaitMin: 5,
+    windowNumber: '3',
   );
 
   void _callNext() {
     setState(() {
-      currentTicket = currentTicket?.copyWith(status: 'IN_SERVICE', windowNumber: windowNumber);
+      currentTicket = currentTicket?.copyWith(
+        status: 'IN_SERVICE', 
+        windowNumber: windowNumber.toString(),
+      );
     });
   }
 
@@ -53,18 +53,25 @@ class _OperatorDashboardState extends State<OperatorDashboard> {
                   children: [
                     const Icon(Icons.store, size: 32, color: Colors.blue),
                     const SizedBox(width: 12),
-                    Text('Окно № $windowNumber', 
-                        style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold)),
+                    Text(
+                      'Окно № $windowNumber', 
+                      style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+                    ),
                   ],
                 ),
                 const SizedBox(height: 32),
                 const Text('Статус окна', style: TextStyle(color: Colors.grey, fontSize: 14)),
                 const SizedBox(height: 8),
                 SwitchListTile(
-                  title: Text(isWindowOpen ? 'Открыто' : 'Закрыто', 
-                      style: TextStyle(fontWeight: FontWeight.bold, color: isWindowOpen ? Colors.green : Colors.red)),
+                  title: Text(
+                    isWindowOpen ? 'Открыто' : 'Закрыто', 
+                    style: TextStyle(
+                      fontWeight: FontWeight.bold, 
+                      color: isWindowOpen ? Colors.green : Colors.red,
+                    ),
+                  ),
                   value: isWindowOpen,
-                  activeColor: Colors.green,
+                  activeThumbColor: Colors.green,
                   onChanged: (val) => setState(() => isWindowOpen = val),
                 ),
                 const Divider(height: 40),
@@ -97,7 +104,7 @@ class _OperatorDashboardState extends State<OperatorDashboard> {
                         style: const TextStyle(fontSize: 96, fontWeight: FontWeight.bold, color: Colors.blue),
                       ),
                       const SizedBox(height: 16),
-                      _buildSourceBadge(currentTicket!.sourceType),
+                      _buildSourceBadge(currentSourceType),
                       const SizedBox(height: 8),
                       Text(
                         'Ожидаемое время: ~${currentTicket!.estimatedWaitMin} мин',
@@ -137,16 +144,29 @@ class _OperatorDashboardState extends State<OperatorDashboard> {
   Widget _buildSourceBadge(String sourceType) {
     Color color;
     String text;
-    switch (sourceType) {
-      case 'BOOKING': color = Colors.green; text = 'Предварительная запись'; break;
-      case 'QR': color = Colors.blue; text = 'QR-код'; break;
-      case 'WALK_IN': color = Colors.orange; text = 'Живая очередь'; break;
-      default: color = Colors.grey; text = sourceType;
+    switch (sourceType.toUpperCase()) {
+      case 'APPOINTMENT':
+      case 'BOOKING':
+        color = Colors.green;
+        text = 'Предварительная запись';
+        break;
+      case 'QR':
+        color = Colors.blue;
+        text = 'QR-код';
+        break;
+      case 'LIVE':
+      case 'WALK_IN':
+        color = Colors.orange;
+        text = 'Живая очередь';
+        break;
+      default:
+        color = Colors.grey;
+        text = sourceType;
     }
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
       decoration: BoxDecoration(
-        color: color.withOpacity(0.1),
+        color: color.withAlpha(25),
         borderRadius: BorderRadius.circular(20),
         border: Border.all(color: color),
       ),
@@ -172,20 +192,18 @@ class _OperatorDashboardState extends State<OperatorDashboard> {
 
 extension TicketCopy on Ticket {
   Ticket copyWith({
-    String? id, String? number, String? sourceType, String? status,
-    String? serviceId, int? windowNumber, String? clientToken,
-    String? createdAt, int? estimatedWaitMin,
+    String? id,
+    String? number,
+    String? status,
+    int? estimatedWaitMin,
+    String? windowNumber,
   }) {
     return Ticket(
       id: id ?? this.id,
       number: number ?? this.number,
-      sourceType: sourceType ?? this.sourceType,
       status: status ?? this.status,
-      serviceId: serviceId ?? this.serviceId,
-      windowNumber: windowNumber ?? this.windowNumber,
-      clientToken: clientToken ?? this.clientToken,
-      createdAt: createdAt ?? this.createdAt,
       estimatedWaitMin: estimatedWaitMin ?? this.estimatedWaitMin,
+      windowNumber: windowNumber ?? this.windowNumber,
     );
   }
 }
