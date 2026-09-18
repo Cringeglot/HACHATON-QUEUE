@@ -179,13 +179,8 @@ def complete(db: Session, ticket_id: int):
     return t
 
 
-def cancel(db: Session, ticket_id: int, reason: str = "Отменён"):
+def cancel(db: Session, t: Ticket, reason: str = "Отменён"):
     """Отменить талон."""
-    t = db.get(Ticket, ticket_id)
-    if t is None:
-        raise ValueError("Талон не найден")
-    if t.status in ("completed", "canceled"):
-        raise ValueError(f"Талон уже {t.status}")
 
     t.status = "canceled"
     t.window_id = None

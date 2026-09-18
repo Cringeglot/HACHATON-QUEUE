@@ -59,6 +59,7 @@ class Ticket(Base):
     window_id = Column(Integer, nullable=True)
     scheduled_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), default=utcnow, nullable=False)
+    user_id = Column(Integer)
 
 class TicketLog(Base):
     """Append-only журнал событий талона."""

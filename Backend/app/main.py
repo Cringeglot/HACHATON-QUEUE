@@ -7,7 +7,7 @@ from datetime import datetime
 
 from app import auth
 
-from app.auth import get_current_user, require_role
+from app.auth import get_current_user, require_role, create_user, CreateUserRequest
 
 from fastapi import FastAPI, Depends, HTTPException
 from fastapi.staticfiles import StaticFiles
@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session
 from starlette import status 
 
 from app.db import Base, engine, get_db, SessionLocal
-from app.models import Branch, Window, Ticket, TicketLog
+from app.models import Branch, Window, Ticket, TicketLog, User
 from app import queue as q
 
 
@@ -40,6 +40,8 @@ def on_startup():
     Base.metadata.create_all(bind=engine)
     # Base.metadata.drop_all(bind=engine)
     db = SessionLocal()
+    if not db.query(User).filter(User.username == 'admin').first():
+        create_user(SessionLocal(), CreateUserRequest(**{'username': 'admin', 'password': '12345'}), 3)
     try:
         if db.query(Branch).count() == 0:
             db.add(Branch(name="Москва-Тверская"))
@@ -49,7 +51,6 @@ def on_startup():
             db.commit()
     finally:
         db.close()
-
 
 app.mount("/ui", StaticFiles(directory="static", html=True), name="static")
 
@@ -103,6 +104,7 @@ def create_ticket(payload: TicketCreate, db: Session = Depends(get_db),  user: d
         source=payload.source,
         status=status,
         scheduled_at=payload.scheduled_at,
+        user_id=user.get('id')
     )
     db.add(t)
     db.flush()
@@ -113,8 +115,8 @@ def create_ticket(payload: TicketCreate, db: Session = Depends(get_db),  user: d
 
 
 @app.get("/api/tickets", tags=["tickets"])
-def list_tickets(db: Session = Depends(get_db)):
-    return [_t(t) for t in db.query(Ticket).order_by(Ticket.id).all()]
+def list_tickets(db: Session = Depends(get_db), user: dict = Depends(require_role(CLIENT_ROLE))):
+    return [_t(t) for t in db.query(Ticket).filter(Ticket.user_id == user.get('id')).order_by(Ticket.id).all()]
 
 
 @app.get("/api/tickets/{ticket_id}", tags=["tickets"])
@@ -126,9 +128,16 @@ def get_ticket(ticket_id: int, db: Session = Depends(get_db)):
 
 
 @app.post("/api/tickets/{ticket_id}/cancel", tags=["tickets"])
-def cancel_ticket(ticket_id: int, db: Session = Depends(get_db)):
+def cancel_ticket(ticket_id: int, db: Session = Depends(get_db), user: dict = Depends(require_role(CLIENT_ROLE))):
     try:
-        t = q.cancel(db, ticket_id, "Отменён клиентом")
+        t = db.get(Ticket, ticket_id)
+        if t is None:
+            raise ValueError("Талон не найден")
+        if t.status in ("completed", "canceled"):
+            raise ValueError(f"Талон уже {t.status}")
+        if t.user_id != user.get('id'):
+            raise ValueError("Это не ваш талон")
+        t = q.cancel(db, t, "Отменён клиентом")
         db.commit()
         return _t(t)
     except ValueError as e:
@@ -241,13 +250,13 @@ def close_window(window_id: int, db: Session = Depends(get_db)):
 # ---------------------------------------------------------------------------
 
 @app.get("/api/branches", tags=["admin"])
-def list_branches(db: Session = Depends(get_db)):
+def list_branches(db: Session = Depends(get_db), user: dict = Depends(require_role(ADMIN_ROLE))):
     """Список всех отделений."""
     return [{"id": b.id, "name": b.name} for b in db.query(Branch).order_by(Branch.id).all()]
 
 
 @app.post("/api/branches", tags=["admin"])
-def create_branch(payload: BranchCreate, db: Session = Depends(get_db)):
+def create_branch(payload: BranchCreate, db: Session = Depends(get_db), user: dict = Depends(require_role(ADMIN_ROLE))):
     """Создать отделение."""
     b = Branch(name=payload.name)
     db.add(b)
@@ -261,7 +270,7 @@ def create_branch(payload: BranchCreate, db: Session = Depends(get_db)):
 # ---------------------------------------------------------------------------
 
 @app.get("/api/analytics", tags=["admin"])
-def analytics(db: Session = Depends(get_db)):
+def analytics(db: Session = Depends(get_db), user: dict = Depends(require_role(ADMIN_ROLE))):
     def count(status=None, source=None):
         stmt = select(func.count(Ticket.id))
         if status: stmt = stmt.where(Ticket.status == status)
@@ -282,7 +291,7 @@ def analytics(db: Session = Depends(get_db)):
 
 
 @app.get("/api/logs", tags=["admin"])
-def list_logs(db: Session = Depends(get_db)):
+def list_logs(db: Session = Depends(get_db), user: dict = Depends(require_role(ADMIN_ROLE))):
     rows = db.query(TicketLog).order_by(TicketLog.id.desc()).limit(100).all()
     return [
         {

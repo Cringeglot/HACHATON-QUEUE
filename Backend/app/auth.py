@@ -39,18 +39,22 @@ def get_db():
 db_dependency = Annotated[Session, Depends(get_db)]
 
 @router.post("/", status_code=status.HTTP_201_CREATED)
-async def create_user(db: db_dependency, create_user_request: CreateUserRequest):
-    create_user_model = User(
+async def create_user_endpoint(db: db_dependency, create_user_request: CreateUserRequest):
+    return create_user(db, create_user_request)
+
+def create_user(db: Session, create_user_request: CreateUserRequest):
+    user_model = User(
     username=create_user_request.username,
     hashed_password=bcrypt_context.hash(create_user_request.password),
     role=0
         )
-    is_username_exist = db.query(User).filter(User.username  == create_user_model.username).first()
+    is_username_exist = db.query(User).filter(User.username  == user_model.username).first()
     if is_username_exist:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail='Username is already taken')
     else:
-        db.add(create_user_model)
+        db.add(user_model)
         db.commit()
+    return user_model
 
 @router.post("/token", response_model=Token)
 async def login_for_access_token(form_data: Annotated[OAuth2PasswordRequestForm, Depends()], db: db_dependency):
