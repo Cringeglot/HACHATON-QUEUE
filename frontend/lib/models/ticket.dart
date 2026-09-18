@@ -4,6 +4,12 @@ class Ticket {
   final String status;
   final int estimatedWaitMin;
   final String? windowNumber;
+  
+  // Новые поля для UI оператора
+  final String? sourceType;
+  final String? serviceId;
+  final String? clientToken;
+  final String? createdAt;
 
   Ticket({
     required this.id,
@@ -11,26 +17,26 @@ class Ticket {
     required this.status,
     required this.estimatedWaitMin,
     this.windowNumber,
+    this.sourceType,
+    this.serviceId,
+    this.clientToken,
+    this.createdAt,
   });
 
   factory Ticket.fromJson(Map<String, dynamic> json) {
     return Ticket(
-      // Безопасное считывание ID (как id, так и ticketId)
       id: json['id']?.toString() ?? json['ticketId']?.toString() ?? '',
-
-      // Если номер отсутствует, выводим '---' вместо падения приложения
       number: json['number']?.toString() ?? json['ticket_number']?.toString() ?? '---',
-
-      // ПРИВЕДЕНИЕ К ВЕРХНЕМУ РЕГИСТРУ: "waiting" -> "WAITING"
       status: (json['status'] as String? ?? 'WAITING').toUpperCase(),
-
-      // Защита от null и поддержка snake_case / camelCase
       estimatedWaitMin: (json['estimatedWaitMin'] ?? json['estimated_wait_min'] as num?)?.toInt() ?? 0,
-
-      // Поддержка различных вариантов названия поля окна от бэкенда
       windowNumber: json['windowNumber']?.toString() ?? 
                     json['window_number']?.toString() ?? 
                     json['window']?.toString(),
+      // Считывание новых полей с поддержкой snake_case
+      sourceType: json['sourceType']?.toString() ?? json['source_type']?.toString(),
+      serviceId: json['serviceId']?.toString() ?? json['service_id']?.toString(),
+      clientToken: json['clientToken']?.toString() ?? json['client_token']?.toString(),
+      createdAt: json['createdAt']?.toString() ?? json['created_at']?.toString(),
     );
   }
 
@@ -41,6 +47,10 @@ class Ticket {
       'status': status,
       'estimatedWaitMin': estimatedWaitMin,
       'windowNumber': windowNumber,
+      'sourceType': sourceType,
+      'serviceId': serviceId,
+      'clientToken': clientToken,
+      'createdAt': createdAt,
     };
   }
 }
