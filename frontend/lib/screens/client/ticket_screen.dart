@@ -1,7 +1,10 @@
 import 'dart:async';
-import 'package:go_router/go_router.dart';
+import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
+import 'package:web_socket_channel/web_socket_channel.dart';
 import '../../core/api_client.dart';
+import '../../core/app_config.dart';
 import '../../core/session_storage.dart';
 import '../../models/ticket.dart';
 
@@ -21,80 +24,233 @@ class TicketScreen extends StatefulWidget {
 
 class _TicketScreenState extends State<TicketScreen> {
   final ApiClient _apiClient = ApiClient();
-  Timer? _pollingTimer;
+
+  late String _activeTicketId;
+  late String _activeClientToken;
+
+  WebSocketChannel? _wsChannel;
+  Timer? _fallbackTimer;
+  Timer? _wsReconnectTimer;
 
   Ticket? _ticket;
   bool _isLoading = true;
   bool _isCancelling = false;
+  bool _isWsConnected = false;
   String? _errorMessage;
+
+  bool _hasNotifiedApproaching = false;
+  bool _hasNotifiedCalled = false;
 
   @override
   void initState() {
     super.initState();
-    // 1. Сразу делаем первый запрос
-    _fetchTicketStatus();
-    // 2. Настраиваем Polling раз в 3 секунды
-    _pollingTimer = Timer.periodic(const Duration(seconds: 3), (_) {
+    _activeTicketId = widget.ticketId;
+    _activeClientToken = widget.clientToken;
+
+    _initializeScreen();
+  }
+
+  Future<void> _initializeScreen() async {
+    // 1. Восстановление сессии из хранилища при случайной перезагрузке (F5)
+    if (_activeTicketId.isEmpty || _activeClientToken.isEmpty) {
+      final session = await SessionStorage.getSession();
+      if (session != null) {
+        _activeTicketId = session['ticketId'] ?? '';
+        _activeClientToken = session['clientToken'] ?? '';
+      }
+    }
+
+    if (_activeTicketId.isEmpty) {
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+          _errorMessage = 'Сессия не найдена';
+        });
+      }
+      return;
+    }
+
+    // 2. Первичная загрузка и запуск WebSocket
+    await _fetchTicketStatus();
+    _initWebSocket();
+  }
+
+  void _initWebSocket() {
+    if (_activeTicketId.isEmpty || _isWsConnected) return;
+
+    try {
+      final wsBase = AppConfig.wsBaseUrl;
+      final wsUrl = Uri.parse('$wsBase/ws/tickets/$_activeTicketId?token=$_activeClientToken');
+      
+      _wsChannel?.sink.close();
+      _wsChannel = WebSocketChannel.connect(wsUrl);
+
+      _wsChannel!.stream.listen(
+        (message) {
+          if (!_isWsConnected) {
+            _isWsConnected = true;
+            _stopFallbackPolling(); // WS заработал — отключаем поллинг
+          }
+          final data = jsonDecode(message);
+          _updateTicketFromData(data);
+        },
+        onError: (_) => _handleWsDisconnect(),
+        onDone: () => _handleWsDisconnect(),
+      );
+    } catch (_) {
+      _handleWsDisconnect();
+    }
+  }
+
+  void _handleWsDisconnect() {
+    if (!mounted) return;
+    _isWsConnected = false;
+    
+    // Переходим на резервный поллинг
+    _startFallbackPolling();
+
+    // Запускаем фоновые попытки восстановить WebSocket
+    _scheduleWsReconnect();
+  }
+
+  void _scheduleWsReconnect() {
+    if (_wsReconnectTimer != null && _wsReconnectTimer!.isActive) return;
+
+    _wsReconnectTimer = Timer.periodic(const Duration(seconds: 5), (_) {
+      if (!_isWsConnected && mounted) {
+        _initWebSocket();
+      }
+    });
+  }
+
+  void _startFallbackPolling() {
+    if (_fallbackTimer != null && _fallbackTimer!.isActive) return;
+
+    _fallbackTimer = Timer.periodic(const Duration(seconds: 10), (_) {
       _fetchTicketStatus();
     });
   }
 
+  void _stopFallbackPolling() {
+    _fallbackTimer?.cancel();
+    _fallbackTimer = null;
+  }
+
   @override
   void dispose() {
-    // Обязательно отменяем таймер при уходе с экрана!
-    _pollingTimer?.cancel();
+    _wsChannel?.sink.close();
+    _fallbackTimer?.cancel();
+    _wsReconnectTimer?.cancel();
     super.dispose();
   }
 
+  void _updateTicketFromData(Map<String, dynamic> data) {
+    if (!mounted) return;
+
+    final updatedTicket = Ticket.fromJson(data);
+
+    if (updatedTicket.status == 'WAITING' &&
+        updatedTicket.estimatedWaitMin <= 5 &&
+        !_hasNotifiedApproaching) {
+      _hasNotifiedApproaching = true;
+      _showNotificationDialog(
+        'Очередь подходит',
+        'Пожалуйста, подойдите ближе к зоне обслуживания. Ваша очередь подойдет примерно через ${updatedTicket.estimatedWaitMin} мин.',
+        Icons.access_time_filled,
+        Colors.orange,
+      );
+    }
+
+    if ((updatedTicket.status == 'CALLED' || updatedTicket.status == 'IN_SERVICE') &&
+        !_hasNotifiedCalled) {
+      _hasNotifiedCalled = true;
+      _showNotificationDialog(
+        'Вас вызывают!',
+        'Пройдите к окну № ${updatedTicket.windowNumber ?? "..."}.',
+        Icons.notifications_active,
+        Colors.green,
+      );
+    }
+
+    setState(() {
+      _ticket = updatedTicket;
+      _isLoading = false;
+      _errorMessage = null;
+    });
+
+    if (updatedTicket.status == 'COMPLETED' || updatedTicket.status == 'CANCELLED') {
+      _wsChannel?.sink.close();
+      _stopFallbackPolling();
+      _wsReconnectTimer?.cancel();
+      SessionStorage.clearSession();
+    }
+  }
+
   Future<void> _fetchTicketStatus() async {
+    if (_activeTicketId.isEmpty) return;
+
     final updatedTicket = await _apiClient.getTicketStatus(
-      widget.ticketId,
-      widget.clientToken,
+      _activeTicketId,
+      _activeClientToken,
     );
 
     if (!mounted) return;
 
     if (updatedTicket != null) {
+      _updateTicketFromData(updatedTicket.toJson());
+    } else if (_isLoading) {
       setState(() {
-        _ticket = updatedTicket;
         _isLoading = false;
-        _errorMessage = null;
+        _errorMessage = 'Не удалось загрузить данные талона';
       });
-
-      // Если талон завершён или отменён на сервере — очищаем сессию
-      if (updatedTicket.status == 'COMPLETED' || updatedTicket.status == 'CANCELLED') {
-        _pollingTimer?.cancel();
-        await SessionStorage.clearSession();
-      }
-    } else {
-      if (_isLoading) {
-        setState(() {
-          _isLoading = false;
-          _errorMessage = 'Не удалось загрузить данные талона';
-        });
-      }
     }
+  }
+
+  void _showNotificationDialog(String title, String message, IconData icon, Color color) {
+    showDialog(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          title: Row(
+            children: [
+              Icon(icon, color: color, size: 28),
+              const SizedBox(width: 8),
+              Text(title),
+            ],
+          ),
+          content: Text(message, style: const TextStyle(fontSize: 16)),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('Понятно', style: TextStyle(fontSize: 16)),
+            ),
+          ],
+        );
+      },
+    );
   }
 
   Future<void> _handleCancel() async {
     setState(() => _isCancelling = true);
 
     final success = await _apiClient.cancelTicket(
-      widget.ticketId,
-      widget.clientToken,
+      _activeTicketId,
+      _activeClientToken,
     );
 
     if (!mounted) return;
 
     if (success) {
-      _pollingTimer?.cancel();
+      _wsChannel?.sink.close();
+      _stopFallbackPolling();
+      _wsReconnectTimer?.cancel();
       await SessionStorage.clearSession();
-      
+
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Запись успешно отменена')),
       );
 
-      // Тут в будущем будет переход на главный экран выбора услуг
       setState(() {
         _ticket = null;
         _isCancelling = false;
@@ -107,7 +263,6 @@ class _TicketScreenState extends State<TicketScreen> {
     }
   }
 
-  // Вспомогательный метод для статуса (текст и цвет)
   (String label, Color color) _getStatusDisplay(String status) {
     switch (status) {
       case 'IN_SERVICE':
@@ -150,19 +305,10 @@ class _TicketScreenState extends State<TicketScreen> {
   }
 
   Widget _buildCardContent() {
-if (_ticket == null) {
-      return Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          const Text('Нет активного талона', style: TextStyle(fontSize: 18)),
-          const SizedBox(height: 16),
-          ElevatedButton(
-            onPressed: () {
-              context.go('/');
-            },
-            child: const Text('Получить новый талон'),
-          ),
-        ],
+    if (_isLoading) {
+      return const Padding(
+        padding: EdgeInsets.all(32.0),
+        child: CircularProgressIndicator(),
       );
     }
 
@@ -175,7 +321,10 @@ if (_ticket == null) {
           Text(_errorMessage!, textAlign: TextAlign.center),
           const SizedBox(height: 16),
           ElevatedButton(
-            onPressed: _fetchTicketStatus,
+            onPressed: () {
+              setState(() => _isLoading = true);
+              _initializeScreen();
+            },
             child: const Text('Повторить'),
           ),
         ],
@@ -189,10 +338,8 @@ if (_ticket == null) {
           const Text('Нет активного талона', style: TextStyle(fontSize: 18)),
           const SizedBox(height: 16),
           ElevatedButton(
-            onPressed: () {
-              // В будущем: переход к выбору услуги
-            },
-            child: const Text('Получить новый талон'),
+            onPressed: () => context.go('/'),
+            child: const Text('На главную'),
           ),
         ],
       );
