@@ -11,8 +11,9 @@ void main() async {
 
   final savedSession = await SessionStorage.getSession();
   
-  // Если сессия есть — идем на экран талона, иначе — на выбор услуг
-  final String initialRoute = savedSession != null ? '/ticket' : '/';
+  final String initialRoute = (savedSession != null)
+      ? '/ticket?ticketId=${savedSession['ticketId']}&clientToken=${savedSession['clientToken']}'
+      : '/';
 
   final GoRouter router = GoRouter(
     initialLocation: initialRoute,
@@ -24,9 +25,18 @@ void main() async {
       GoRoute(
         path: '/booking',
         builder: (context, state) {
-          // Получаем название услуги из навигации
-          final serviceName = state.extra as String? ?? 'Неизвестная услуга';
-          return BookingScreen(serviceName: serviceName);
+          // Принимаем словарь с данными вместо одиночной строки
+          final extra = state.extra as Map<String, dynamic>?;
+
+          final serviceName = extra?['serviceName']?.toString() ?? 'Неизвестная услуга';
+          final serviceId = extra?['serviceId']?.toString() ?? 's1';
+          final branchId = extra?['branchId']?.toString() ?? '101000';
+
+          return BookingScreen(
+            serviceName: serviceName,
+            serviceId: serviceId,
+            branchId: branchId,
+          );
         },
       ),
       GoRoute(
@@ -36,10 +46,10 @@ void main() async {
       GoRoute(
         path: '/ticket',
         builder: (context, state) {
-          // Пытаемся взять данные из extra (новый талон), иначе берем из хранилища (старый)
           final extra = state.extra as Map<String, dynamic>?;
-          final ticketId = extra?['ticketId'] ?? savedSession?['ticketId'] ?? '';
-          final clientToken = extra?['clientToken'] ?? savedSession?['clientToken'] ?? '';
+          
+          final ticketId = state.uri.queryParameters['ticketId'] ?? extra?['ticketId'] ?? '';
+          final clientToken = state.uri.queryParameters['clientToken'] ?? extra?['clientToken'] ?? '';
           
           return TicketScreen(
             ticketId: ticketId,

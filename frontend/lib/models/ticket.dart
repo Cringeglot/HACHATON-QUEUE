@@ -1,53 +1,56 @@
 class Ticket {
-  final String id;                  // UUID
-  final String number;              // например: A-101
-  final String sourceType;          // BOOKING, QR, WALK_IN
-  final String status;              // WAITING, IN_SERVICE, COMPLETED, CANCELLED
-  final String serviceId;           // UUID выбранной услуги
-  final int? windowNumber;          // Номер окна (null если еще в очереди)
-  final String clientToken;         // Секретный токен сессии
-  final String createdAt;           // ISO время
-  final int estimatedWaitMin;       // Прогнозируемое время ожидания (в минутах)
+  final String id;
+  final String number;
+  final String status;
+  final int estimatedWaitMin;
+  final String? windowNumber;
+  
+  // Новые поля для UI оператора
+  final String? sourceType;
+  final String? serviceId;
+  final String? clientToken;
+  final String? createdAt;
 
   Ticket({
     required this.id,
     required this.number,
-    required this.sourceType,
     required this.status,
-    required this.serviceId,
-    this.windowNumber,
-    required this.clientToken,
-    required this.createdAt,
     required this.estimatedWaitMin,
+    this.windowNumber,
+    this.sourceType,
+    this.serviceId,
+    this.clientToken,
+    this.createdAt,
   });
-
 
   factory Ticket.fromJson(Map<String, dynamic> json) {
     return Ticket(
-      id: json['id'] as String,
-      number: json['number'] as String,
-      sourceType: json['sourceType'] as String,
-      status: json['status'] as String,
-      serviceId: json['serviceId'] as String,
-      windowNumber: json['windowNumber'] as int?,
-      clientToken: json['clientToken'] as String,
-      createdAt: json['createdAt'] as String,
-      estimatedWaitMin: json['estimatedWaitMin'] as int? ?? 0,
+      id: json['id']?.toString() ?? json['ticketId']?.toString() ?? '',
+      number: json['number']?.toString() ?? json['ticket_number']?.toString() ?? '---',
+      status: (json['status'] as String? ?? 'WAITING').toUpperCase(),
+      estimatedWaitMin: (json['estimatedWaitMin'] ?? json['estimated_wait_min'] as num?)?.toInt() ?? 0,
+      windowNumber: json['windowNumber']?.toString() ?? 
+                    json['window_number']?.toString() ?? 
+                    json['window']?.toString(),
+      // Считывание новых полей с поддержкой snake_case
+      sourceType: json['sourceType']?.toString() ?? json['source_type']?.toString(),
+      serviceId: json['serviceId']?.toString() ?? json['service_id']?.toString(),
+      clientToken: json['clientToken']?.toString() ?? json['client_token']?.toString(),
+      createdAt: json['createdAt']?.toString() ?? json['created_at']?.toString(),
     );
   }
 
-  // Сериализация обратно в JSON
   Map<String, dynamic> toJson() {
     return {
       'id': id,
       'number': number,
-      'sourceType': sourceType,
       'status': status,
-      'serviceId': serviceId,
+      'estimatedWaitMin': estimatedWaitMin,
       'windowNumber': windowNumber,
+      'sourceType': sourceType,
+      'serviceId': serviceId,
       'clientToken': clientToken,
       'createdAt': createdAt,
-      'estimatedWaitMin': estimatedWaitMin,
     };
   }
 }

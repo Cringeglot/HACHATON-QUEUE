@@ -38,7 +38,9 @@ dependencies:
   go_router: ^18.0.1
   shared_preferences: ^2.2.2
   provider: ^6.1.5+1
-
+  intl: ^0.20.3
+  web_socket_channel: ^2.4.0
+  
 dev_dependencies:
   flutter_test:
     sdk: flutter

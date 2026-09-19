@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import '../../core/session_storage.dart';
+import '../../core/api_client.dart';
 
 class QrEntryScreen extends StatefulWidget {
   const QrEntryScreen({super.key});
@@ -12,20 +13,27 @@ class QrEntryScreen extends StatefulWidget {
 class _QrEntryScreenState extends State<QrEntryScreen> {
   bool isLoading = false;
 
-  Future<void> _simulateQrScan() async {
-    setState(() => isLoading = true);
+Future<void> _simulateQrScan() async {
+  setState(() => isLoading = true);
 
-    // Эмуляция сетевого запроса к бэкенду для взятия талона из "Живой очереди" (WALK_IN)
-    await Future.delayed(const Duration(seconds: 1)); 
+  final result = await ApiClient().createQrTicket();
 
-    final newTicketId = 'qr-ticket-${DateTime.now().millisecondsSinceEpoch}';
-    final newClientToken = 'token-qr-123';
+  if (!mounted) return;
+
+  if (result != null) {
+    final newTicketId = result['ticketId']!;
+    final newClientToken = result['clientToken']!;
 
     await SessionStorage.saveSession(newTicketId, newClientToken);
-
-    if (!mounted) return;
-    context.go('/ticket', extra: {'ticketId': newTicketId, 'clientToken': newClientToken});
+    
+    context.go('/ticket?ticketId=$newTicketId&clientToken=$newClientToken');
+  } else {
+    setState(() => isLoading = false);
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Ошибка при получении талона')),
+    );
   }
+}
 
   @override
   Widget build(BuildContext context) {
