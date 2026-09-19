@@ -16,7 +16,7 @@ class ApiClient {
   }
 
   // Флаг для переключения между тестовыми данными и реальным бэкендом
-  final bool _useMock = true;
+  final bool _useMock = false;
 
   // 1. Создание записи (предварительная запись)
   Future<Map<String, String>?> createBooking(String date, String time, String serviceId, String branchId) async {
@@ -29,15 +29,16 @@ class ApiClient {
     }
 
     try {
-      final response = await _dio.post(
-        '/api/tickets',
-        data: {
-          'source': 'appointment',
-          'date': date,
-          'time': time,
-          'service_id': serviceId,
-        },
-      );
+// Пример отправки корректного JSON в ApiClient:
+final response = await _dio.post(
+  '/api/tickets',
+  data: {
+    'branch_id': 1,         // int, не String
+    'service_id': 1,        // int (число, например 1, 2, 3)
+    'source': 'qr',         // "appointment", "qr" или "live"
+    'scheduled_at': null,   // ISO-строка даты или null
+  },
+);
 
       if (response.statusCode == 200 || response.statusCode == 201) {
         return {
@@ -46,9 +47,13 @@ class ApiClient {
         };
       }
     } catch (e) {
-      print('Ошибка при создании записи: $e');
-    }
-    return null;
+  // Добавьте эти строки для детального лога:
+  if (e is DioException) {
+    print('Ошибка бэкенда [${e.response?.statusCode}]: ${e.response?.data}');
+  } else {
+    print('Ошибка при создании записи: $e');
+  }
+}
   }
 
   // 2. Создание талона по QR-коду
