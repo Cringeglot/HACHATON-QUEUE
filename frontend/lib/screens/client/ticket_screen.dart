@@ -274,13 +274,16 @@ class _TicketScreenState extends State<TicketScreen> {
     }
   }
 
-  (String label, Color color) _getStatusDisplay(String status) {
+(String label, Color color) _getStatusDisplay(String status) {
     switch (status) {
       case 'IN_SERVICE':
       case 'CALLED':
         return ('Вызван к окну', Colors.green);
       case 'WAITING':
         return ('В очереди', Colors.orange);
+      case 'SCHEDULED':
+      case 'scheduled': 
+        return ('Запланировано', Colors.teal); 
       case 'COMPLETED':
         return ('Завершено', Colors.blue);
       case 'CANCELLED':
@@ -390,19 +393,23 @@ class _TicketScreenState extends State<TicketScreen> {
           ),
         ] else ...[
           Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              const Icon(Icons.access_time, color: Colors.grey),
-              const SizedBox(width: 8),
-              Text(
-                'Примерное время: ~${_ticket!.estimatedWaitMin} мин.',
-                style: const TextStyle(fontSize: 16, color: Colors.black87),
-              ),
-            ],
-          ),
+  children: [
+    Icon(Icons.info),
+    SizedBox(width: 8),
+    Expanded( // <-- Занимает только оставшееся свободное место
+      child: Text(
+        'Примерное время: ~${_ticket!.estimatedWaitMin} мин.',
+        overflow: TextOverflow.ellipsis, // <-- Добавляет "..." в конце, если не влезает
+        maxLines: 1,
+      ),
+    ),
+  ],
+)
         ],
         const SizedBox(height: 24),
-        if (_ticket!.status == 'WAITING')
+        if (_ticket!.status == 'WAITING' || 
+          _ticket!.status == 'scheduled' || 
+          _ticket!.status == 'SCHEDULED')
           OutlinedButton(
             onPressed: _isCancelling ? null : _handleCancel,
             style: OutlinedButton.styleFrom(

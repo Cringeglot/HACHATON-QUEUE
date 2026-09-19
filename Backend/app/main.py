@@ -2,6 +2,7 @@
 """
 FastAPI-приложение системы электронной очереди.
 """
+import asyncio
 
 from datetime import datetime
 
@@ -9,7 +10,7 @@ from app import auth
 
 from app.auth import get_current_user
 
-from fastapi import FastAPI, Depends, HTTPException
+from fastapi import FastAPI, Depends, HTTPException,  WebSocket, WebSocketDisconnect, Query
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from sqlalchemy import select, func
@@ -25,12 +26,97 @@ app = FastAPI(title="E-Queue MVP", version="0.1.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],     
-    allow_credentials=True,
+    allow_credentials=True, 
     allow_methods=["*"],        
     allow_headers=["*"],       
 )
 
 app.include_router(auth.router)
+
+
+# ---------------------------------------------------------------------------
+# WebSocket Менеджер
+# ---------------------------------------------------------------------------
+class ConnectionManager:
+    def __init__(self):
+        self.active_connections: dict[int, list[WebSocket]] = {}
+
+    async def connect(self, websocket: WebSocket, ticket_id: int):
+        await websocket.accept()
+        if ticket_id not in self.active_connections:
+            self.active_connections[ticket_id] = []
+        self.active_connections[ticket_id].append(websocket)
+
+    def disconnect(self, websocket: WebSocket, ticket_id: int):
+        if ticket_id in self.active_connections:
+            self.active_connections[ticket_id].remove(websocket)
+            if not self.active_connections[ticket_id]:
+                del self.active_connections[ticket_id]
+
+    async def send_update(self, ticket_id: int, ticket_data: dict):
+        if ticket_id in self.active_connections:
+            for connection in self.active_connections[ticket_id]:
+                try:
+                    # Отправляем обновленные данные талона на фронтенд
+                    await connection.send_json(ticket_data)
+                except Exception:
+                    pass
+
+ws_manager = ConnectionManager()
+
+def broadcast_ticket_update(ticket_id: int, data: dict):
+    """Безопасная отправка WS-уведомлений из обычных синхронных def-функций."""
+    try:
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            loop.create_task(ws_manager.send_update(ticket_id, data))
+    except RuntimeError:
+        pass
+
+@app.websocket("/ws/tickets/{ticket_id}")
+async def websocket_ticket(websocket: WebSocket, ticket_id: int, token: str = Query(None)):
+    """
+    Эндпоинт, к которому стучится фронтенд. 
+    Проверяем токен "1" и сразу отправляем текущие данные талона при подключении.
+    """
+    if token != "1":
+        await websocket.close(code=1008) # Ошибка доступа
+        return
+        
+    await ws_manager.connect(websocket, ticket_id)
+    
+    # 1. Получаем актуальные данные талона из базы при подключении
+    try:
+        db = SessionLocal()
+        t = db.get(Ticket, ticket_id)
+        if t:
+            resp = _t(t)
+            # ИСПОЛЬЗУЕМ .dict() или .model_dump() с предварительным переводом в dict
+            # Либо используем встроенную функцию _t(t), которая возвращает TicketResponse, 
+            # у которого датированные поля нужно перевести в строки:
+            data_to_send = resp.model_dump()
+            # Конвертируем datetime в строку ISO, если она там есть
+            if isinstance(data_to_send.get('created_at'), datetime):
+                data_to_send['created_at'] = data_to_send['created_at'].isoformat()
+                
+            await websocket.send_json(data_to_send)
+        else:
+            await websocket.send_json({"error": f"Ticket {ticket_id} not found"})
+    except Exception as e:
+        print(f"WS Send Error: {e}")
+        await websocket.send_json({"error": str(e)})
+    finally:
+        db.close()
+
+    # 2. Держим соединение открытым
+    try:
+        while True:
+            data = await websocket.receive_text()
+    except WebSocketDisconnect:
+        ws_manager.disconnect(websocket, ticket_id)
+
+
+
 @app.get("/")
 async def user(user: dict = Depends(get_current_user), db: Session = Depends(get_db)):
     if user is None:
@@ -147,7 +233,9 @@ def cancel_ticket(ticket_id: int, db: Session = Depends(get_db)):
     try:
         t = q.cancel(db, ticket_id, "Отменён клиентом")
         db.commit()
-        return _t(t)
+        resp = _t(t)
+        broadcast_ticket_update(ticket_id, resp.model_dump()) # <--- Уведомляем фронт
+        return resp
     except ValueError as e:
         raise HTTPException(400, str(e))
 
@@ -157,7 +245,9 @@ def complete_ticket(ticket_id: int, db: Session = Depends(get_db)):
     try:
         t = q.complete(db, ticket_id)
         db.commit()
-        return _t(t)
+        resp = _t(t)
+        broadcast_ticket_update(ticket_id, resp.model_dump()) # <--- Уведомляем фронт
+        return resp
     except ValueError as e:
         raise HTTPException(400, str(e))
 

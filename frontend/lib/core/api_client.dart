@@ -18,8 +18,7 @@ class ApiClient {
   // Флаг для переключения между тестовыми данными и реальным бэкендом
   final bool _useMock = false;
 
-  // 1. Создание записи (предварительная запись)
-  Future<Map<String, String>?> createBooking(String date, String time, String serviceId, String branchId) async {
+Future<Map<String, String>?> createBooking(String date, String time, String serviceId, String branchId) async {
     if (_useMock) {
       await Future.delayed(const Duration(seconds: 1));
       return {
@@ -29,31 +28,36 @@ class ApiClient {
     }
 
     try {
-// Пример отправки корректного JSON в ApiClient:
-final response = await _dio.post(
-  '/api/tickets',
-  data: {
-    'branch_id': 1,         // int, не String
-    'service_id': 1,        // int (число, например 1, 2, 3)
-    'source': 'qr',         // "appointment", "qr" или "live"
-    'scheduled_at': null,   // ISO-строка даты или null
-  },
-);
+      final response = await _dio.post(
+        '/api/tickets',
+        data: {
+          'branch_id': int.tryParse(branchId) ?? 1,
+          'service_id': int.tryParse(serviceId) ?? 1,
+          'source': 'appointment',
+          'scheduled_at': '${date}T$time:00',
+        },
+      );
 
       if (response.statusCode == 200 || response.statusCode == 201) {
-        return {
-          'ticketId': (response.data['id'] ?? response.data['ticketId']).toString(),
-          'clientToken': (response.data['token'] ?? response.data['clientToken']).toString(),
-        };
+        final data = response.data;
+        final token = data['token'] ?? data['clientToken'] ?? data['client_token'];
+        final ticketId = data['id'] ?? data['ticketId'] ?? data['ticket_id'];
+
+        if (ticketId != null && token != null) {
+          return {
+            'ticketId': ticketId.toString(),
+            'clientToken': token.toString(),
+          };
+        }
       }
     } catch (e) {
-  // Добавьте эти строки для детального лога:
-  if (e is DioException) {
-    print('Ошибка бэкенда [${e.response?.statusCode}]: ${e.response?.data}');
-  } else {
-    print('Ошибка при создании записи: $e');
-  }
-}
+      if (e is DioException) {
+        print('Ошибка бэкенда [${e.response?.statusCode}]: ${e.response?.data}');
+      } else {
+        print('Ошибка при создании записи: $e');
+      }
+    }
+    return null;
   }
 
   // 2. Создание талона по QR-коду
@@ -73,10 +77,16 @@ final response = await _dio.post(
       );
 
       if (response.statusCode == 200 || response.statusCode == 201) {
-        return {
-          'ticketId': (response.data['id'] ?? response.data['ticketId']).toString(),
-          'clientToken': (response.data['token'] ?? response.data['clientToken']).toString(),
-        };
+        final data = response.data;
+        final token = data['token'] ?? data['clientToken'] ?? data['client_token'];
+        final ticketId = data['id'] ?? data['ticketId'] ?? data['ticket_id'];
+
+        if (ticketId != null && token != null) {
+          return {
+            'ticketId': ticketId.toString(),
+            'clientToken': token.toString(),
+          };
+        }
       }
     } catch (e) {
       print('Ошибка получения QR-талона: $e');
