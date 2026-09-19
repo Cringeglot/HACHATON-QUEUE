@@ -11,9 +11,10 @@ from app.auth import get_current_user
 
 from fastapi import FastAPI, Depends, HTTPException
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import select, func
 from sqlalchemy.orm import Session
+from fastapi.middleware.cors import CORSMiddleware
 
 from app.db import Base, engine, get_db, SessionLocal
 from app.models import Branch, Window, Ticket, TicketLog
@@ -21,6 +22,13 @@ from app import queue as q
 
 
 app = FastAPI(title="E-Queue MVP", version="0.1.0")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],     
+    allow_credentials=True,
+    allow_methods=["*"],        
+    allow_headers=["*"],       
+)
 
 app.include_router(auth.router)
 @app.get("/")
@@ -60,6 +68,20 @@ class TicketCreate(BaseModel):
     source: str = "qr"
     scheduled_at: datetime | None = None
 
+class TicketResponse(BaseModel):
+    id: int
+    number: str 
+    status: str
+    estimated_wait_min: int = 0 
+    window_number: str | None = None  
+    source_type: str 
+    service_id: int
+    client_token: str | None = None  
+    created_at: datetime
+
+    class Config:
+        from_attributes = True 
+
 
 class WindowOpen(BaseModel):
     branch_id: int = 1
@@ -91,7 +113,6 @@ def health():
 def create_ticket(payload: TicketCreate, db: Session = Depends(get_db)):
     """Создать талон. source определяет способ входа."""
     status = "scheduled" if payload.source == "appointment" else "waiting"
-
     t = Ticket(
         public_code=_next_code(db),
         branch_id=payload.branch_id,
@@ -302,14 +323,15 @@ def _next_code(db: Session) -> str:
 
 
 def _t(t: Ticket) -> dict:
-    return {
+    dct = {
         "id": t.id,
-        "public_code": t.public_code,
-        "branch_id": t.branch_id,
-        "service_id": t.service_id,
-        "source": t.source,
+        "number": t.public_code,
         "status": t.status,
-        "window_id": t.window_id,
-        "scheduled_at": t.scheduled_at.isoformat() if t.scheduled_at else None,
+        "estimated_wait_min": 0,
+        "window_number": t.window_id,
+        "source_type": t.source,
+        "service_id": t.service_id,
+        "client_token": "1",
         "created_at": t.created_at.isoformat() if t.created_at else None,
     }
+    return TicketResponse(**dct)
