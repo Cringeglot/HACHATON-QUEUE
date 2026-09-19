@@ -9,6 +9,8 @@ import 'screens/client/qr_entry_screen.dart';
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
+ //await SessionStorage.clearSession();
+
   final savedSession = await SessionStorage.getSession();
   
   final String initialRoute = (savedSession != null)
