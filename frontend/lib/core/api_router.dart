@@ -1,6 +1,10 @@
 class ApiRouter {
   ApiRouter._();
 
+  // Авторизация
+  static const String register = '/auth/';
+  static const String token = '/auth/token';
+
   // Талоны
   static const String tickets = '/api/tickets';
   static String ticket(String ticketId) => '/api/tickets/$ticketId';

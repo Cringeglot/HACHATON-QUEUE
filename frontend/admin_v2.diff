@@ -1,0 +1,482 @@
+--- a/admin_dashboard.dart	2026-09-18 11:32:26.688600177 +0000
++++ b/admin_dashboard.dart	2026-09-18 11:26:00.681166390 +0000
+@@ -1,9 +1,148 @@
+ import 'package:flutter/material.dart';
+ 
+-class AdminDashboard extends StatelessWidget {
++/// Панель руководителя отделения.
++///
++/// Все данные ниже — мок для верстки экрана. Везде, где стоит TODO,
++/// нужно подставить реальный вызов API (когда бэкенд будет готов).
++class AdminDashboard extends StatefulWidget {
+   const AdminDashboard({super.key});
+ 
+   @override
++  State<AdminDashboard> createState() => _AdminDashboardState();
++}
++
++class _WindowInfo {
++  final int number;
++  bool isOpen;
++  Set<String> services;
++  int servedToday;
++  String? currentTicket;
++
++  _WindowInfo({
++    required this.number,
++    required this.isOpen,
++    required this.services,
++    required this.servedToday,
++    this.currentTicket,
++  });
++}
++
++class _QueueEntry {
++  final String ticketNumber;
++  final String source; // prebooking / qr / live_queue
++  final int waitMinutes;
++
++  _QueueEntry(this.ticketNumber, this.source, this.waitMinutes);
++}
++
++class _AdminDashboardState extends State<AdminDashboard> {
++  final List<String> allServices = const [
++    'Паспорт РФ',
++    'Справки',
++    'Посылки',
++    'Финансовые услуги',
++  ];
++
++  // TODO: GET /api/offices/{id}/windows
++  final List<_WindowInfo> windows = [
++    _WindowInfo(number: 1, isOpen: true, services: {'Паспорт РФ', 'Справки'}, servedToday: 34, currentTicket: 'A-040'),
++    _WindowInfo(number: 2, isOpen: true, services: {'Посылки'}, servedToday: 41, currentTicket: 'A-041'),
++    _WindowInfo(number: 3, isOpen: true, services: {'Паспорт РФ', 'Посылки'}, servedToday: 29, currentTicket: 'A-042'),
++    _WindowInfo(number: 4, isOpen: false, services: {'Финансовые услуги'}, servedToday: 18),
++  ];
++
++  // TODO: GET /api/offices/{id}/queue (реальное время — обновлять поллингом/веб-сокетом)
++  final List<_QueueEntry> queue = [
++    _QueueEntry('A-043', 'BOOKING', 2),
++    _QueueEntry('A-044', 'QR', 6),
++    _QueueEntry('A-045', 'WALK_IN', 14),
++    _QueueEntry('A-046', 'WALK_IN', 31),
++  ];
++
++  // TODO: GET /api/offices/{id}/tickets?status=incomplete|anomaly
++  final List<Map<String, String>> issues = [
++    {'ticket': 'A-038', 'reason': 'Ожидание > 30 мин', 'source': 'Живая очередь', 'type': 'anomaly'},
++    {'ticket': 'A-039', 'reason': 'Окно закрыто во время обслуживания', 'source': 'QR-код', 'type': 'anomaly'},
++    {'ticket': 'A-036', 'reason': 'Отменён клиентом до вызова', 'source': 'Предзапись', 'type': 'incomplete'},
++  ];
++
++  // Конфиг приоритетов — соответствует backend/app/core/priority_config.py
++  late final Map<String, TextEditingController> priorityControllers = {
++    'weight_prebooking_due': TextEditingController(text: '100'),
++    'weight_prebooking_early': TextEditingController(text: '5'),
++    'weight_qr': TextEditingController(text: '20'),
++    'weight_live_queue': TextEditingController(text: '10'),
++    'wait_bonus_per_minute': TextEditingController(text: '1'),
++    'live_queue_max_wait_minutes': TextEditingController(text: '30'),
++  };
++
++  @override
++  void dispose() {
++    for (final c in priorityControllers.values) {
++      c.dispose();
++    }
++    super.dispose();
++  }
++
++  int get avgWaitMinutes =>
++      queue.isEmpty ? 0 : (queue.map((q) => q.waitMinutes).reduce((a, b) => a + b) / queue.length).round();
++
++  int get maxWaitMinutes => queue.isEmpty ? 0 : queue.map((q) => q.waitMinutes).reduce((a, b) => a > b ? a : b);
++
++  int get servedTotal => windows.map((w) => w.servedToday).fold(0, (a, b) => a + b);
++
++  void _toggleWindow(_WindowInfo window, bool open) {
++    setState(() => window.isOpen = open);
++    // TODO: POST /api/windows/{window.number}/open|close
++  }
++
++  Future<void> _editWindowServices(_WindowInfo window) async {
++    final result = await showDialog<Set<String>>(
++      context: context,
++      builder: (context) {
++        final selection = {...window.services};
++        return StatefulBuilder(
++          builder: (context, setDialogState) => AlertDialog(
++            title: Text('Услуги окна № ${window.number}'),
++            content: SizedBox(
++              width: 300,
++              child: Column(
++                mainAxisSize: MainAxisSize.min,
++                children: allServices
++                    .map((s) => CheckboxListTile(
++                          title: Text(s),
++                          value: selection.contains(s),
++                          onChanged: (checked) => setDialogState(() {
++                            checked == true ? selection.add(s) : selection.remove(s);
++                          }),
++                        ))
++                    .toList(),
++              ),
++            ),
++            actions: [
++              TextButton(onPressed: () => Navigator.pop(context), child: const Text('Отмена')),
++              ElevatedButton(onPressed: () => Navigator.pop(context, selection), child: const Text('Сохранить')),
++            ],
++          ),
++        );
++      },
++    );
++    if (result != null) {
++      setState(() => window.services = result);
++      // TODO: PUT /api/windows/{window.number}/services
++    }
++  }
++
++  void _savePriorityConfig() {
++    final values = priorityControllers.map((key, c) => MapEntry(key, num.tryParse(c.text) ?? 0));
++    ScaffoldMessenger.of(context).showSnackBar(
++      const SnackBar(content: Text('Правила приоритета сохранены')),
++    );
++    // TODO: PUT /api/priority-config  body: values
++    debugPrint('priority config: $values');
++  }
++
++  @override
+   Widget build(BuildContext context) {
+     return Scaffold(
+       backgroundColor: Colors.grey[100],
+@@ -12,75 +151,39 @@
+         backgroundColor: Colors.indigo,
+         foregroundColor: Colors.white,
+       ),
+-      body: Padding(
++      body: SingleChildScrollView(
+         padding: const EdgeInsets.all(24.0),
+         child: Column(
+           crossAxisAlignment: CrossAxisAlignment.start,
+           children: [
+             Row(
+               children: [
+-                _buildStatCard('В очереди', '12', Colors.blue, Icons.people),
++                _buildStatCard('В очереди', '${queue.length}', Colors.blue, Icons.people),
++                const SizedBox(width: 16),
++                _buildStatCard('Среднее ожидание', '$avgWaitMinutes мин', Colors.green, Icons.timer),
+                 const SizedBox(width: 16),
+-                _buildStatCard('Среднее ожидание', '8 мин', Colors.green, Icons.timer),
++                _buildStatCard('Макс. ожидание', '$maxWaitMinutes мин', Colors.red, Icons.hourglass_bottom),
+                 const SizedBox(width: 16),
+-                _buildStatCard('Активные окна', '4 / 5', Colors.orange, Icons.store),
++                _buildStatCard('Обслужено сегодня', '$servedTotal', Colors.purple, Icons.check_circle_outline),
+               ],
+             ),
+             const SizedBox(height: 24),
+-            Expanded(
+-              child: Row(
+-                crossAxisAlignment: CrossAxisAlignment.start,
+-                children: [
+-                  Expanded(
+-                    flex: 2,
+-                    child: Card(
+-                      child: Padding(
+-                        padding: const EdgeInsets.all(16.0),
+-                        child: Column(
+-                          crossAxisAlignment: CrossAxisAlignment.start,
+-                          children: [
+-                            const Text('Статус окон', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+-                            const SizedBox(height: 16),
+-                            _buildWindowRow(1, 'Открыто', 'A-040', Colors.green),
+-                            const Divider(),
+-                            _buildWindowRow(2, 'Открыто', 'A-041', Colors.green),
+-                            const Divider(),
+-                            _buildWindowRow(3, 'Открыто', 'A-042', Colors.green),
+-                            const Divider(),
+-                            _buildWindowRow(4, 'Закрыто', '-', Colors.red),
+-                          ],
+-                        ),
+-                      ),
+-                    ),
+-                  ),
+-                  const SizedBox(width: 24),
+-                  Expanded(
+-                    flex: 1,
+-                    child: Card(
+-                      color: Colors.red[50],
+-                      child: Padding(
+-                        padding: const EdgeInsets.all(16.0),
+-                        child: Column(
+-                          crossAxisAlignment: CrossAxisAlignment.start,
+-                          children: [
+-                            const Row(
+-                              children: [
+-                                Icon(Icons.warning, color: Colors.red),
+-                                SizedBox(width: 8),
+-                                Text('Аномалии', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.red)),
+-                              ],
+-                            ),
+-                            const SizedBox(height: 16),
+-                            _buildAnomalyItem('A-038', 'Ожидание > 30 мин', 'Живая очередь'),
+-                            const SizedBox(height: 12),
+-                            _buildAnomalyItem('A-039', 'Окно закрыто во время обслуживания', 'QR-код'),
+-                          ],
+-                        ),
+-                      ),
+-                    ),
+-                  ),
+-                ],
+-              ),
++            Row(
++              crossAxisAlignment: CrossAxisAlignment.start,
++              children: [
++                Expanded(flex: 2, child: _buildWindowsCard()),
++                const SizedBox(width: 24),
++                Expanded(flex: 2, child: _buildQueueCard()),
++              ],
++            ),
++            const SizedBox(height: 24),
++            Row(
++              crossAxisAlignment: CrossAxisAlignment.start,
++              children: [
++                Expanded(flex: 2, child: _buildIssuesCard()),
++                const SizedBox(width: 24),
++                Expanded(flex: 2, child: _buildPriorityConfigCard()),
++              ],
+             ),
+           ],
+         ),
+@@ -95,14 +198,16 @@
+           padding: const EdgeInsets.all(20.0),
+           child: Row(
+             children: [
+-              Icon(icon, size: 40, color: color),
+-              const SizedBox(width: 16),
+-              Column(
+-                crossAxisAlignment: CrossAxisAlignment.start,
+-                children: [
+-                  Text(title, style: const TextStyle(color: Colors.grey, fontSize: 14)),
+-                  Text(value, style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold, color: color)),
+-                ],
++              Icon(icon, size: 36, color: color),
++              const SizedBox(width: 12),
++              Expanded(
++                child: Column(
++                  crossAxisAlignment: CrossAxisAlignment.start,
++                  children: [
++                    Text(title, style: const TextStyle(color: Colors.grey, fontSize: 13)),
++                    Text(value, style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: color)),
++                  ],
++                ),
+               ),
+             ],
+           ),
+@@ -111,42 +216,174 @@
+     );
+   }
+ 
+-  Widget _buildWindowRow(int number, String status, String currentTicket, Color statusColor) {
+-    return Row(
+-      children: [
+-        Text('Окно $number', style: const TextStyle(fontWeight: FontWeight.bold)),
+-        const SizedBox(width: 16),
+-        Container(
+-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+-          decoration: BoxDecoration(color: statusColor.withValues(alpha: 0.1), borderRadius: BorderRadius.circular(4)),
+-          child: Text(status, style: TextStyle(color: statusColor, fontWeight: FontWeight.bold)),
+-        ),
+-        const SizedBox(width: 16),
+-        const Text('Текущий:'),
+-        const SizedBox(width: 8),
+-        Text(currentTicket, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+-      ],
++  Widget _buildWindowsCard() {
++    return Card(
++      child: Padding(
++        padding: const EdgeInsets.all(16.0),
++        child: Column(
++          crossAxisAlignment: CrossAxisAlignment.start,
++          children: [
++            const Text('Окна и услуги', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
++            const SizedBox(height: 12),
++            ...windows.map((w) => Padding(
++                  padding: const EdgeInsets.symmetric(vertical: 6),
++                  child: Row(
++                    children: [
++                      SizedBox(width: 70, child: Text('Окно ${w.number}', style: const TextStyle(fontWeight: FontWeight.bold))),
++                      Switch(
++                        value: w.isOpen,
++                        activeThumbColor: Colors.green,
++                        onChanged: (v) => _toggleWindow(w, v),
++                      ),
++                      Expanded(
++                        child: Text(
++                          w.services.isEmpty ? 'нет услуг' : w.services.join(', '),
++                          overflow: TextOverflow.ellipsis,
++                          style: const TextStyle(color: Colors.grey),
++                        ),
++                      ),
++                      Text('${w.servedToday} обсл.', style: const TextStyle(fontSize: 12, color: Colors.grey)),
++                      IconButton(
++                        icon: const Icon(Icons.edit, size: 18),
++                        onPressed: () => _editWindowServices(w),
++                      ),
++                    ],
++                  ),
++                )),
++          ],
++        ),
++      ),
++    );
++  }
++
++  Widget _buildQueueCard() {
++    return Card(
++      child: Padding(
++        padding: const EdgeInsets.all(16.0),
++        child: Column(
++          crossAxisAlignment: CrossAxisAlignment.start,
++          children: [
++            const Text('Очередь сейчас', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
++            const SizedBox(height: 12),
++            if (queue.isEmpty) const Text('Очередь пуста', style: TextStyle(color: Colors.grey)),
++            ...queue.map((q) => Padding(
++                  padding: const EdgeInsets.symmetric(vertical: 4),
++                  child: Row(
++                    children: [
++                      Text(q.ticketNumber, style: const TextStyle(fontWeight: FontWeight.bold)),
++                      const SizedBox(width: 12),
++                      Text(_sourceLabel(q.source), style: const TextStyle(color: Colors.grey, fontSize: 13)),
++                      const Spacer(),
++                      Text('${q.waitMinutes} мин', style: TextStyle(color: q.waitMinutes > 20 ? Colors.red : Colors.black87)),
++                    ],
++                  ),
++                )),
++          ],
++        ),
++      ),
+     );
+   }
+ 
+-  Widget _buildAnomalyItem(String ticketNumber, String reason, String source) {
+-    return Container(
+-      padding: const EdgeInsets.all(12),
+-      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(8)),
+-      child: Column(
+-        crossAxisAlignment: CrossAxisAlignment.start,
+-        children: [
+-          Row(
+-            children: [
+-              Text(ticketNumber, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+-              const SizedBox(width: 8),
+-              Text('($source)', style: const TextStyle(color: Colors.grey, fontSize: 12)),
+-            ],
+-          ),
+-          const SizedBox(height: 4),
+-          Text(reason, style: const TextStyle(color: Colors.red, fontSize: 14)),
+-        ],
++  Widget _buildIssuesCard() {
++    return Card(
++      color: Colors.red[50],
++      child: Padding(
++        padding: const EdgeInsets.all(16.0),
++        child: Column(
++          crossAxisAlignment: CrossAxisAlignment.start,
++          children: [
++            const Row(
++              children: [
++                Icon(Icons.warning, color: Colors.red),
++                SizedBox(width: 8),
++                Text('Отклонения и незавершённые талоны', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.red)),
++              ],
++            ),
++            const SizedBox(height: 12),
++            if (issues.isEmpty) const Text('Отклонений нет', style: TextStyle(color: Colors.grey)),
++            ...issues.map((i) => Container(
++                  margin: const EdgeInsets.only(bottom: 8),
++                  padding: const EdgeInsets.all(10),
++                  decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(8)),
++                  child: Column(
++                    crossAxisAlignment: CrossAxisAlignment.start,
++                    children: [
++                      Row(
++                        children: [
++                          Text(i['ticket']!, style: const TextStyle(fontWeight: FontWeight.bold)),
++                          const SizedBox(width: 6),
++                          Text('(${i['source']})', style: const TextStyle(color: Colors.grey, fontSize: 12)),
++                          const Spacer(),
++                          Chip(
++                            label: Text(i['type'] == 'anomaly' ? 'аномалия' : 'не завершён', style: const TextStyle(fontSize: 11)),
++                            visualDensity: VisualDensity.compact,
++                          ),
++                        ],
++                      ),
++                      Text(i['reason']!, style: const TextStyle(color: Colors.red, fontSize: 13)),
++                    ],
++                  ),
++                )),
++          ],
++        ),
++      ),
++    );
++  }
++
++  Widget _buildPriorityConfigCard() {
++    return Card(
++      child: Padding(
++        padding: const EdgeInsets.all(16.0),
++        child: Column(
++          crossAxisAlignment: CrossAxisAlignment.start,
++          children: [
++            const Text('Правила приоритета очереди', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
++            const SizedBox(height: 4),
++            const Text('Соответствуют polям PriorityConfig на бэкенде', style: TextStyle(fontSize: 12, color: Colors.grey)),
++            const SizedBox(height: 12),
++            ..._priorityFieldLabels.entries.map((e) => Padding(
++                  padding: const EdgeInsets.symmetric(vertical: 4),
++                  child: Row(
++                    children: [
++                      Expanded(child: Text(e.value, style: const TextStyle(fontSize: 13))),
++                      SizedBox(
++                        width: 80,
++                        child: TextField(
++                          controller: priorityControllers[e.key],
++                          keyboardType: const TextInputType.numberWithOptions(decimal: true),
++                          textAlign: TextAlign.right,
++                          decoration: const InputDecoration(isDense: true, border: OutlineInputBorder()),
++                        ),
++                      ),
++                    ],
++                  ),
++                )),
++            const SizedBox(height: 12),
++            SizedBox(
++              width: double.infinity,
++              child: ElevatedButton(onPressed: _savePriorityConfig, child: const Text('Сохранить')),
++            ),
++          ],
++        ),
+       ),
+     );
+   }
++
++  static const _priorityFieldLabels = {
++    'weight_prebooking_due': 'Предзапись (время наступило)',
++    'weight_prebooking_early': 'Предзапись (заранее)',
++    'weight_qr': 'QR-талон',
++    'weight_live_queue': 'Живая очередь',
++    'wait_bonus_per_minute': 'Бонус за мин. ожидания',
++    'live_queue_max_wait_minutes': 'Макс. ожидание живой очереди (мин)',
++  };
++
++  String _sourceLabel(String source) {
++    switch (source) {
++      case 'BOOKING': return 'Предзапись';
++      case 'QR': return 'QR-код';
++      case 'WALK_IN': return 'Живая очередь';
++      default: return source;
++    }
++  }
+ }
