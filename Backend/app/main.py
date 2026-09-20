@@ -25,7 +25,7 @@ from app import queue as q
 app = FastAPI(title="E-Queue MVP", version="0.1.0")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],     
+    allow_origin_regex=".*",     # Динамически возвращает origin запроса (подходит для localhost с любым портом)
     allow_credentials=True, 
     allow_methods=["*"],        
     allow_headers=["*"],       
@@ -33,7 +33,7 @@ app.add_middleware(
 
 app.include_router(auth.router)
 
-
+main_loop = None
 # ---------------------------------------------------------------------------
 # WebSocket Менеджер
 # ---------------------------------------------------------------------------
@@ -57,21 +57,17 @@ class ConnectionManager:
         if ticket_id in self.active_connections:
             for connection in self.active_connections[ticket_id]:
                 try:
-                    # Отправляем обновленные данные талона на фронтенд
                     await connection.send_json(ticket_data)
-                except Exception:
-                    pass
+                except Exception as e:
+                    print(f"Ошибка отправки WS для талона {ticket_id}: {e}")
 
 ws_manager = ConnectionManager()
 
 def broadcast_ticket_update(ticket_id: int, data: dict):
     """Безопасная отправка WS-уведомлений из обычных синхронных def-функций."""
-    try:
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
-            loop.create_task(ws_manager.send_update(ticket_id, data))
-    except RuntimeError:
-        pass
+    global main_loop
+    if main_loop and main_loop.is_running():
+        asyncio.run_coroutine_threadsafe(ws_manager.send_update(ticket_id, data), main_loop)
 
 @app.websocket("/ws/tickets/{ticket_id}")
 async def websocket_ticket(websocket: WebSocket, ticket_id: int, token: str = Query(None)):
@@ -125,10 +121,12 @@ async def user(user: dict = Depends(get_current_user), db: Session = Depends(get
 
 
 @app.on_event("startup")
-def on_startup():
+async def on_startup():
     """Создаём таблицы и наполняем справочники, если пусто."""
+    global main_loop
+    main_loop = asyncio.get_running_loop()
+    
     Base.metadata.create_all(bind=engine)
-   # Base.metadata.drop_all(bind=engine)
     db = SessionLocal()
     try:
         if db.query(Branch).count() == 0:
@@ -234,7 +232,7 @@ def cancel_ticket(ticket_id: int, db: Session = Depends(get_db)):
         t = q.cancel(db, ticket_id, "Отменён клиентом")
         db.commit()
         resp = _t(t)
-        broadcast_ticket_update(ticket_id, resp.model_dump()) # <--- Уведомляем фронт
+        broadcast_ticket_update(ticket_id, resp.model_dump(mode='json')) # <--- Уведомляем фронт
         return resp
     except ValueError as e:
         raise HTTPException(400, str(e))
@@ -246,7 +244,7 @@ def complete_ticket(ticket_id: int, db: Session = Depends(get_db)):
         t = q.complete(db, ticket_id)
         db.commit()
         resp = _t(t)
-        broadcast_ticket_update(ticket_id, resp.model_dump()) # <--- Уведомляем фронт
+        broadcast_ticket_update(ticket_id, resp.model_dump(mode='json')) # <--- Уведомляем фронт
         return resp
     except ValueError as e:
         raise HTTPException(400, str(e))
@@ -261,7 +259,17 @@ def return_ticket(ticket_id: int, db: Session = Depends(get_db)):
     except ValueError as e:
         raise HTTPException(400, str(e))
 
-
+@app.post("/api/tickets/{ticket_id}/activate", tags=["tickets"])
+def activate_ticket(ticket_id: int, db: Session = Depends(get_db)):
+    """Подтвердить приход клиента по предзаписи (перевести из scheduled в waiting)."""
+    try:
+        t = q.activate(db, ticket_id)
+        db.commit()
+        resp = _t(t)
+        broadcast_ticket_update(ticket_id, resp.model_dump(mode='json')) # Уведомляем фронтенд по WebSocket
+        return resp
+    except ValueError as e:
+        raise HTTPException(400, str(e))
 # ---------------------------------------------------------------------------
 # Окна
 # ---------------------------------------------------------------------------
@@ -309,8 +317,11 @@ def call_next(window_id: int, db: Session = Depends(get_db)):
 
     if t is None:
         return {"ticket": None, "message": "Общий пул пуст"}
+    
     db.refresh(t)
-    return {"ticket": _t(t), "pool": "recorded"}
+    ticket_data = _t(t).model_dump(mode='json')
+    broadcast_ticket_update(t.id, ticket_data) # Уведомляем Flutter через WebSocket
+    return {"ticket": ticket_data, "pool": "recorded"}
 
 
 @app.post("/api/windows/{window_id}/call-live", tags=["windows"])
@@ -328,8 +339,11 @@ def call_live(window_id: int, db: Session = Depends(get_db)):
 
     if t is None:
         return {"ticket": None, "message": "Живая очередь пуста"}
+        
     db.refresh(t)
-    return {"ticket": _t(t), "pool": "live"}
+    ticket_data = _t(t).model_dump(mode='json')
+    broadcast_ticket_update(t.id, ticket_data) # Уведомляем Flutter через WebSocket
+    return {"ticket": ticket_data, "pool": "live"}
 
 
 @app.post("/api/windows/{window_id}/close", tags=["windows"])
@@ -412,13 +426,13 @@ def _next_code(db: Session) -> str:
     return f"A-{n + 1:03d}"
 
 
-def _t(t: Ticket) -> dict:
+def _t(t: Ticket) -> TicketResponse:
     dct = {
         "id": t.id,
         "number": t.public_code,
         "status": t.status,
         "estimated_wait_min": 0,
-        "window_number": t.window_id,
+        "window_number": str(t.window_id) if t.window_id is not None else None,
         "source_type": t.source,
         "service_id": t.service_id,
         "client_token": "1",

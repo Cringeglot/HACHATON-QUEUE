@@ -60,8 +60,7 @@ Future<Map<String, String>?> createBooking(String date, String time, String serv
     return null;
   }
 
-  // 2. Создание талона по QR-коду
-  Future<Map<String, String>?> createQrTicket() async {
+Future<Map<String, String>?> createQrTicket(String branchId, String serviceId) async {
     if (_useMock) {
       await Future.delayed(const Duration(seconds: 1));
       return {
@@ -73,15 +72,19 @@ Future<Map<String, String>?> createBooking(String date, String time, String serv
     try {
       final response = await _dio.post(
         '/api/tickets',
-        data: {'source': 'qr'},
+        data: {
+          'branch_id': int.tryParse(branchId) ?? 1,
+          'service_id': int.tryParse(serviceId) ?? 1,
+          'source': 'qr' // Бэкенд поймет, что это талон из отделения
+        },
       );
 
       if (response.statusCode == 200 || response.statusCode == 201) {
         final data = response.data;
-        final token = data['token'] ?? data['clientToken'] ?? data['client_token'];
+        final token = data['token'] ?? data['clientToken'] ?? data['client_token'] ?? '1'; // Фолбэк на 1 для WS бэкенда
         final ticketId = data['id'] ?? data['ticketId'] ?? data['ticket_id'];
 
-        if (ticketId != null && token != null) {
+        if (ticketId != null) {
           return {
             'ticketId': ticketId.toString(),
             'clientToken': token.toString(),
@@ -141,4 +144,30 @@ Future<Map<String, String>?> createBooking(String date, String time, String serv
       return false;
     }
   }
+Future<List<Map<String, dynamic>>> getBranches() async {
+  if (_useMock) {
+    return [
+      {'id': 1, 'name': '101000, г. Москва, ул. Мясницкая, 26'},
+      {'id': 2, 'name': '119019, г. Москва, ул. Новый Арбат, 2'},
+    ];
+  }
+
+  try {
+    final response = await _dio.get('/api/branches');
+    if (response.statusCode == 200) {
+      final List data = response.data;
+      return data.map((item) => {
+        'id': item['id'],
+        'name': item['name'] ?? 'Отделение №${item['id']}',
+      }).toList();
+    }
+  } catch (e) {
+    print('Ошибка загрузки отделений: $e');
+  }
+  
+  // Фолбэк на случай недоступности API
+  return [
+    {'id': 1, 'name': 'Москва-Тверская (Отделение №1)'}
+  ];
+}
 }

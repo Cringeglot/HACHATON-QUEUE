@@ -76,7 +76,8 @@ def is_ready(t: Ticket, now: datetime) -> bool:
     """Созрел ли талон для вызова."""
     if t.status not in ("waiting", "scheduled"):
         return False
-    if t.source != "appointment" or not t.scheduled_at:
+    # Если талон уже активирован (waiting) или это не предзапись — он готов к вызову
+    if t.status == "waiting" or t.source != "appointment" or not t.scheduled_at:
         return True
     sched = _aware(t.scheduled_at)
     return now >= sched - timedelta(minutes=ACTIVATION_MINUTES)
@@ -232,3 +233,16 @@ def close_window(db: Session, window_id: int):
 
     db.flush()
     return returned
+
+def activate(db: Session, ticket_id: int):
+    """Активировать талон предзаписи (клиент пришел и подтвердил присутствие)."""
+    t = db.get(Ticket, ticket_id)
+    if t is None:
+        raise ValueError("Талон не найден")
+    if t.status != "scheduled":
+        raise ValueError(f"Нельзя активировать талон в статусе {t.status}")
+
+    t.status = "waiting"
+    log_event(db, t.id, "activate", "Талон активирован клиентом в терминале/QR")
+    db.flush()
+    return t

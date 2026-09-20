@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
+import '../../core/api_client.dart';
 
 class ServiceSelectionScreen extends StatefulWidget {
   const ServiceSelectionScreen({super.key});
@@ -9,22 +10,35 @@ class ServiceSelectionScreen extends StatefulWidget {
 }
 
 class _ServiceSelectionScreenState extends State<ServiceSelectionScreen> {
-  String? _selectedBranchId;
+  int? _selectedBranchId; // Меняем String? на int?, так как бэкенд ждет ID числом
+  List<Map<String, dynamic>> _branches = [];
+  bool _isLoadingBranches = true;
 
-  // Демонстрационный список отделений
-  final List<Map<String, String>> branches = const [
-    {'id': 'b1', 'name': '101000, г. Москва, ул. Мясницкая, 26'},
-    {'id': 'b2', 'name': '119019, г. Москва, ул. Новый Арбат, 2'},
-    {'id': 'b3', 'name': '125009, г. Москва, Тверская ул., 9'},
-  ];
-
-  // Демонстрационный список услуг
   final List<Map<String, String>> services = const [
-    {'id': 's1', 'name': 'Получить посылку или письмо', 'icon': 'inventory'},
-    {'id': 's2', 'name': 'Отправить посылку или письмо', 'icon': 'mark_email_read'},
-    {'id': 's3', 'name': 'Финансовые услуги (переводы, пенсии)', 'icon': 'account_balance_wallet'},
-    {'id': 's4', 'name': 'Прочие услуги', 'icon': 'more_horiz'},
+    {'id': '1', 'name': 'Получить посылку или письмо', 'icon': 'inventory'},
+    {'id': '2', 'name': 'Отправить посылку или письмо', 'icon': 'mark_email_read'},
+    {'id': '3', 'name': 'Финансовые услуги', 'icon': 'account_balance_wallet'},
+    {'id': '4', 'name': 'Прочие услуги', 'icon': 'more_horiz'},
   ];
+
+  @override
+  void initState() {
+    super.initState();
+    _loadBranches();
+  }
+
+  Future<void> _loadBranches() async {
+    final branches = await ApiClient().getBranches();
+    if (mounted) {
+      setState(() {
+        _branches = branches;
+        _isLoadingBranches = false;
+        if (_branches.isNotEmpty) {
+          _selectedBranchId = _branches.first['id'] as int;
+        }
+      });
+    }
+  }
 
   IconData _getIcon(String iconName) {
     switch (iconName) {
@@ -53,24 +67,26 @@ class _ServiceSelectionScreenState extends State<ServiceSelectionScreen> {
               children: [
                 const Text('Выберите отделение:', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
                 const SizedBox(height: 12),
-                DropdownButtonFormField<String>(
-                  decoration: InputDecoration(
-                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
-                    contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                  ),
-                  hint: const Text('Нажмите для выбора отделения'),
-                  value: _selectedBranchId,
-                  isExpanded: true,
-                  items: branches.map((branch) {
-                    return DropdownMenuItem<String>(
-                      value: branch['id'],
-                      child: Text(branch['name']!),
-                    );
-                  }).toList(),
-                  onChanged: (value) {
-                    setState(() => _selectedBranchId = value);
-                  },
-                ),
+                _isLoadingBranches
+                    ? const Center(child: CircularProgressIndicator())
+                    : DropdownButtonFormField<int>(
+                        decoration: InputDecoration(
+                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                          contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                        ),
+                        hint: const Text('Выберите отделение'),
+                        value: _selectedBranchId,
+                        isExpanded: true,
+                        items: _branches.map((branch) {
+                          return DropdownMenuItem<int>(
+                            value: branch['id'] as int,
+                            child: Text(branch['name'].toString()),
+                          );
+                        }).toList(),
+                        onChanged: (value) {
+                          setState(() => _selectedBranchId = value);
+                        },
+                      ),
                 const SizedBox(height: 32),
                 
                 if (_selectedBranchId != null) ...[
@@ -85,33 +101,36 @@ class _ServiceSelectionScreenState extends State<ServiceSelectionScreen> {
                       title: Text(service['name']!, style: const TextStyle(fontWeight: FontWeight.w500)),
                       trailing: const Icon(Icons.arrow_forward_ios, size: 16),
                       onTap: () {
-                          context.push(
+                        context.push(
                           '/booking',
                           extra: {
-                          'serviceName': service['name']!,
-                          'serviceId': service['id']!,
-                          'branchId': _selectedBranchId!,
-                              },
-                            );
-                         },
+                            'serviceName': service['name']!,
+                            'serviceId': service['id']!,
+                            'branchId': _selectedBranchId.toString(),
+                          },
+                        );
+                      },
                     ),
                   )),
-                ] else ...[
-                  const Center(
-                    child: Padding(
-                      padding: EdgeInsets.all(32.0),
-                      child: Text('Сначала выберите отделение, чтобы увидеть список услуг', 
-                                  textAlign: TextAlign.center, style: TextStyle(color: Colors.grey)),
-                    ),
-                  )
                 ],
 
                 const Divider(height: 48),
                 Center(
                   child: TextButton.icon(
-                    onPressed: () => context.push('/qr-entry'),
+                    onPressed: () {
+                      if (_selectedBranchId == null) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(content: Text('Пожалуйста, выберите отделение')),
+                        );
+                        return;
+                      }
+                      context.push('/qr-entry', extra: {
+                        'branchId': _selectedBranchId.toString(),
+                        'serviceId': '1', 
+                      });
+                    },
                     icon: const Icon(Icons.qr_code_scanner),
-                    label: const Text('Я уже в отделении (ввести код)'),
+                    label: const Text('Я уже в отделении (получить QR-талон)'),
                     style: TextButton.styleFrom(
                       foregroundColor: const Color(0xFF0055A5),
                       padding: const EdgeInsets.all(16),

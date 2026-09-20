@@ -365,7 +365,7 @@ class _TicketScreenState extends State<TicketScreen> {
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        const Text('Отделение № 101000', style: TextStyle(color: Colors.grey, fontSize: 14)),
+        Text('Отделение № ${_ticket!.branchId ?? "1"}', style: const TextStyle(color: Colors.grey, fontSize: 14),),
         const SizedBox(height: 16),
         Text(
           _ticket!.number,

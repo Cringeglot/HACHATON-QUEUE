@@ -4,7 +4,14 @@ import '../../core/session_storage.dart';
 import '../../core/api_client.dart';
 
 class QrEntryScreen extends StatefulWidget {
-  const QrEntryScreen({super.key});
+  final String branchId;
+  final String serviceId;
+
+  const QrEntryScreen({
+    super.key,
+    required this.branchId,
+    required this.serviceId,
+  });
 
   @override
   State<QrEntryScreen> createState() => _QrEntryScreenState();
@@ -13,27 +20,28 @@ class QrEntryScreen extends StatefulWidget {
 class _QrEntryScreenState extends State<QrEntryScreen> {
   bool isLoading = false;
 
-Future<void> _simulateQrScan() async {
-  setState(() => isLoading = true);
+  Future<void> _simulateQrScan() async {
+    setState(() => isLoading = true);
 
-  final result = await ApiClient().createQrTicket();
+    // Передаем данные в обновленный метод
+    final result = await ApiClient().createQrTicket(widget.branchId, widget.serviceId);
 
-  if (!mounted) return;
+    if (!mounted) return;
 
-  if (result != null) {
-    final newTicketId = result['ticketId']!;
-    final newClientToken = result['clientToken']!;
+    if (result != null) {
+      final newTicketId = result['ticketId']!;
+      final newClientToken = result['clientToken']!;
 
-    await SessionStorage.saveSession(newTicketId, newClientToken);
-    
-    context.go('/ticket?ticketId=$newTicketId&clientToken=$newClientToken');
-  } else {
-    setState(() => isLoading = false);
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Ошибка при получении талона')),
-    );
+      await SessionStorage.saveSession(newTicketId, newClientToken);
+      
+      context.go('/ticket?ticketId=$newTicketId&clientToken=$newClientToken');
+    } else {
+      setState(() => isLoading = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Ошибка при получении талона. Проверьте соединение с сервером.')),
+      );
+    }
   }
-}
 
   @override
   Widget build(BuildContext context) {

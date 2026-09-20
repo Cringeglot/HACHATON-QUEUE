@@ -41,9 +41,15 @@ void main() async {
           );
         },
       ),
-      GoRoute(
+        GoRoute(
         path: '/qr-entry',
-        builder: (context, state) => const QrEntryScreen(),
+        builder: (context, state) {
+          final extra = state.extra as Map<String, dynamic>?;
+          return QrEntryScreen(
+            branchId: extra?['branchId']?.toString() ?? '1',
+            serviceId: extra?['serviceId']?.toString() ?? '1',
+          );
+        },
       ),
       GoRoute(
         path: '/ticket',
