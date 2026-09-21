@@ -30,6 +30,7 @@ class User(Base):
     id = Column(Integer, primary_key=True)
     username = Column(String(50), unique=True)
     hashed_password = Column(String(100))
+    role = Column(Integer)
 
 class Window(Base):
     """Окно оператора."""

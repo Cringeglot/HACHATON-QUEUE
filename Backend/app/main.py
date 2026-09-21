@@ -8,7 +8,7 @@ from datetime import datetime
 
 from app import auth
 
-from app.auth import get_current_user
+from app.auth import get_current_user, require_role, create_user, CreateUserRequest
 
 from fastapi import FastAPI, Depends, HTTPException,  WebSocket, WebSocketDisconnect, Query
 from fastapi.staticfiles import StaticFiles
@@ -18,7 +18,7 @@ from sqlalchemy.orm import Session
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.db import Base, engine, get_db, SessionLocal
-from app.models import Branch, Window, Ticket, TicketLog
+from app.models import Branch, Window, Ticket, TicketLog, User
 from app import queue as q
 
 
@@ -31,6 +31,10 @@ app.add_middleware(
     allow_headers=["*"],       
 )
 
+CLIENT = 0
+OPERATOR = 1
+DIRECTOR = 2
+ADMIN = 3
 app.include_router(auth.router)
 
 main_loop = None
@@ -125,9 +129,11 @@ async def on_startup():
     """Создаём таблицы и наполняем справочники, если пусто."""
     global main_loop
     main_loop = asyncio.get_running_loop()
-    
     Base.metadata.create_all(bind=engine)
+    # Base.metadata.drop_all(bind=engine)
     db = SessionLocal()
+    if not db.query(User).filter(User.username == "admin").first():
+        create_user(SessionLocal(), CreateUserRequest(**{"username": "admin", "password": "12345", "role": "admin"}))
     try:
         if db.query(Branch).count() == 0:
             db.add(Branch(name="Москва-Тверская"))
@@ -275,7 +281,7 @@ def activate_ticket(ticket_id: int, db: Session = Depends(get_db)):
 # ---------------------------------------------------------------------------
 
 @app.post("/api/windows", tags=["windows"])
-def open_window(payload: WindowOpen, db: Session = Depends(get_db)):
+def open_window(payload: WindowOpen, db: Session = Depends(get_db), user: dict = Depends(require_role([OPERATOR, DIRECTOR]))):
     """Открыть окно оператора."""
     w = Window(branch_id=payload.branch_id, number=payload.number, is_open=1)
     db.add(w)
@@ -293,7 +299,7 @@ def list_windows(db: Session = Depends(get_db)):
 
 
 @app.post("/api/windows/{window_id}/call-next", tags=["windows"])
-def call_next(window_id: int, db: Session = Depends(get_db)):
+def call_next(window_id: int, db: Session = Depends(get_db), user: dict = Depends(require_role([OPERATOR, DIRECTOR]))):
     """Вызвать из общего пула (appointment + qr). Живая очередь НЕ участвует."""
     w = db.get(Window, window_id)
     if w is None:
@@ -325,7 +331,7 @@ def call_next(window_id: int, db: Session = Depends(get_db)):
 
 
 @app.post("/api/windows/{window_id}/call-live", tags=["windows"])
-def call_live(window_id: int, db: Session = Depends(get_db)):
+def call_live(window_id: int, db: Session = Depends(get_db), user: dict = Depends(require_role([OPERATOR, DIRECTOR]))):
     """Вызвать из живой очереди (source=live)."""
     w = db.get(Window, window_id)
     if w is None:
@@ -347,7 +353,7 @@ def call_live(window_id: int, db: Session = Depends(get_db)):
 
 
 @app.post("/api/windows/{window_id}/close", tags=["windows"])
-def close_window(window_id: int, db: Session = Depends(get_db)):
+def close_window(window_id: int, db: Session = Depends(get_db), user: dict = Depends(require_role([OPERATOR, DIRECTOR]))):
     """Закрыть окно. Активный клиент возвращается в очередь."""
     returned = q.close_window(db, window_id)
     db.commit()
@@ -368,7 +374,7 @@ def list_branches(db: Session = Depends(get_db)):
 
 
 @app.post("/api/branches", tags=["admin"])
-def create_branch(payload: BranchCreate, db: Session = Depends(get_db)):
+def create_branch(payload: BranchCreate, db: Session = Depends(get_db), user: dict = Depends(require_role([ADMIN]))):
     """Создать отделение."""
     b = Branch(name=payload.name)
     db.add(b)
@@ -382,7 +388,7 @@ def create_branch(payload: BranchCreate, db: Session = Depends(get_db)):
 # ---------------------------------------------------------------------------
 
 @app.get("/api/analytics", tags=["admin"])
-def analytics(db: Session = Depends(get_db)):
+def analytics(db: Session = Depends(get_db), user: dict = Depends(require_role([DIRECTOR]))):
     def count(status=None, source=None):
         stmt = select(func.count(Ticket.id))
         if status: stmt = stmt.where(Ticket.status == status)
@@ -403,7 +409,7 @@ def analytics(db: Session = Depends(get_db)):
 
 
 @app.get("/api/logs", tags=["admin"])
-def list_logs(db: Session = Depends(get_db)):
+def list_logs(db: Session = Depends(get_db), user: dict = Depends(require_role([ADMIN]))):
     rows = db.query(TicketLog).order_by(TicketLog.id.desc()).limit(100).all()
     return [
         {
