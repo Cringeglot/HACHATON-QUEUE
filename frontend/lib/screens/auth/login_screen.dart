@@ -32,18 +32,26 @@ class _LoginScreenState extends State<LoginScreen> {
     setState(() => _isLoading = false);
 
 if (token != null) {
-  // Декодируем токен (предполагается, что бэкенд зашифровал туда role)
-  Map<String, dynamic> decodedToken = JwtDecoder.decode(token);
-  String userRole = decodedToken['role'] ?? 'operator';
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Успешный вход в систему!'), backgroundColor: Colors.green),
+      );
+      
+      // Декодируем токен
+      Map<String, dynamic> decodedToken = JwtDecoder.decode(token);
+      String userRole = decodedToken['role'] ?? 'operator';
 
-  if (userRole == 'admin') {
-    context.go('/admin-dashboard');
-  } else {
-    // В идеале token должен содержать и ID окна (window_id)
-    int assignedWindowId = decodedToken['window_id'] ?? 1; 
-    context.go('/operator-dashboard/$assignedWindowId');
-  }
-}
+      if (userRole == 'admin') {
+        context.go('/admin-dashboard');
+      } else {
+        int assignedWindowId = decodedToken['window_id'] ?? 1; 
+        context.go('/operator-dashboard/$assignedWindowId');
+      }
+    } else {
+      // Этот блок обязателен, иначе при неверном пароле приложение просто "зависнет"
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Неверный логин или пароль'), backgroundColor: Colors.red),
+      );
+    }
   }
 
   @override
