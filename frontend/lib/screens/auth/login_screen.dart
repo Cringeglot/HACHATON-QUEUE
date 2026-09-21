@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import '../../core/auth_service.dart';
+import 'package:jwt_decoder/jwt_decoder.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -30,21 +31,19 @@ class _LoginScreenState extends State<LoginScreen> {
     if (!mounted) return;
     setState(() => _isLoading = false);
 
-    if (token != null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Успешный вход в систему!'), backgroundColor: Colors.green),
-      );
-      
-      if (username.toLowerCase().contains('admin')) {
-        context.go('/admin-dashboard');
-      } else {
-        context.go('/operator-dashboard');
-      }
-    } else {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Неверный логин или пароль'), backgroundColor: Colors.red),
-      );
-    }
+if (token != null) {
+  // Декодируем токен (предполагается, что бэкенд зашифровал туда role)
+  Map<String, dynamic> decodedToken = JwtDecoder.decode(token);
+  String userRole = decodedToken['role'] ?? 'operator';
+
+  if (userRole == 'admin') {
+    context.go('/admin-dashboard');
+  } else {
+    // В идеале token должен содержать и ID окна (window_id)
+    int assignedWindowId = decodedToken['window_id'] ?? 1; 
+    context.go('/operator-dashboard/$assignedWindowId');
+  }
+}
   }
 
   @override
