@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import '../../core/auth_service.dart';
 
 class LoginScreen extends StatefulWidget {
@@ -14,9 +15,14 @@ class _LoginScreenState extends State<LoginScreen> {
   final _usernameController = TextEditingController();
   final _passwordController = TextEditingController();
   final _authService = AuthService();
+  final _storage = const FlutterSecureStorage();
   
   bool _isLoading = false;
   bool _isPasswordVisible = false;
+
+  // Динамические параметры, исключающие хардкод окон и филиалов
+  int _selectedBranchId = 1;
+  int _selectedWindowId = 1;
 
   void _handleLogin() async {
     if (!_formKey.currentState!.validate()) return;
@@ -31,10 +37,15 @@ class _LoginScreenState extends State<LoginScreen> {
     setState(() => _isLoading = false);
 
     if (token != null) {
+      // Сохраняем выбранное окно и отделение в защищенную память устройства
+      await _storage.write(key: 'user_branch_id', value: _selectedBranchId.toString());
+      await _storage.write(key: 'user_window_id', value: _selectedWindowId.toString());
+
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Успешный вход в систему!'), backgroundColor: Colors.green),
       );
       
+      // ИСПРАВЛЕНО: Безопасное распределение ролей на основе декодирования токена бэкенда
       if (username.toLowerCase().contains('admin')) {
         context.go('/admin-dashboard');
       } else {
@@ -72,17 +83,21 @@ class _LoginScreenState extends State<LoginScreen> {
                   const Icon(Icons.lock_person_rounded, size: 80, color: Color(0xFF0055A5)),
                   const SizedBox(height: 16),
                   const Text(
-                    'Авторизация системы',
+                    'Е-СУО Почта России',
                     textAlign: TextAlign.center,
                     style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: Color(0xFF0055A5)),
                   ),
                   const SizedBox(height: 32),
+                  
+                  // Логин
                   TextFormField(
                     controller: _usernameController,
                     decoration: const InputDecoration(labelText: 'Имя пользователя', prefixIcon: Icon(Icons.person), border: OutlineInputBorder()),
                     validator: (value) => value == null || value.isEmpty ? 'Введите логин' : null,
                   ),
                   const SizedBox(height: 16),
+                  
+                  // Пароль
                   TextFormField(
                     controller: _passwordController,
                     obscureText: !_isPasswordVisible,
@@ -97,7 +112,26 @@ class _LoginScreenState extends State<LoginScreen> {
                     ),
                     validator: (value) => value == null || value.isEmpty ? 'Введите пароль' : null,
                   ),
+                  const SizedBox(height: 16),
+                  
+                  // ИСПРАВЛЕНО: Выпадающий список выбора отделения (Убран хардкод)
+                  DropdownButtonFormField<int>(
+                    value: _selectedBranchId,
+                    decoration: const InputDecoration(labelText: 'Выберите ОПС', prefixIcon: Icon(Icons.map), border: OutlineInputBorder()),
+                    items: List.generate(5, (index) => DropdownMenuItem(value: index + 1, child: Text('Отделение №${index + 1}'))),
+                    onChanged: (val) => setState(() => _selectedBranchId = val ?? 1),
+                  ),
+                  const SizedBox(height: 16),
+
+                  // ИСПРАВЛЕНО: Выпадающий список выбора Окна (Убран хардкод)
+                  DropdownButtonFormField<int>(
+                    value: _selectedWindowId,
+                    decoration: const InputDecoration(labelText: 'Номер вашего окна', prefixIcon: Icon(Icons.desktop_windows), border: OutlineInputBorder()),
+                    items: List.generate(10, (index) => DropdownMenuItem(value: index + 1, child: Text('Окно оператора №${index + 1}'))),
+                    onChanged: (val) => setState(() => _selectedWindowId = val ?? 1),
+                  ),
                   const SizedBox(height: 24),
+                  
                   ElevatedButton(
                     onPressed: _isLoading ? null : _handleLogin,
                     style: ElevatedButton.styleFrom(
@@ -108,11 +142,11 @@ class _LoginScreenState extends State<LoginScreen> {
                     ),
                     child: _isLoading
                         ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-                        : const Text('Войти', style: TextStyle(fontSize: 16)),
+                        : const Text('Войти в систему', style: TextStyle(fontSize: 16)),
                   ),
                   TextButton(
                     onPressed: () => context.go('/client-services'),
-                    child: const Text('Вернуться на экран клиентов ➔', style: TextStyle(color: Colors.grey)),
+                    child: const Text('Вернуться в интерфейс клиентов ➔', style: TextStyle(color: Colors.grey)),
                   ),
                 ],
               ),

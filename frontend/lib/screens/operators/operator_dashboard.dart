@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:dio/dio.dart';
 import 'package:go_router/go_router.dart';
@@ -17,7 +18,11 @@ class _OperatorDashboardState extends State<OperatorDashboard> {
   final _storage = const FlutterSecureStorage();
 
   bool isLoading = false;
-  final int windowId = 1; 
+  
+  // ИСПРАВЛЕНО: Динамические переменные вместо захардкоженного Окна №1
+  int windowId = 1;
+  int branchId = 1;
+  Timer? _autoRefreshTimer;
 
   List<Ticket> _queue = [];
   Ticket? currentTicket;
@@ -25,7 +30,31 @@ class _OperatorDashboardState extends State<OperatorDashboard> {
   @override
   void initState() {
     super.initState();
+    _loadWorkerConfig();
+  }
+
+  // Загрузка динамических параметров окна, выбранных на экране авторизации
+  Future<void> _loadWorkerConfig() async {
+    final savedBranch = await _storage.read(key: 'user_branch_id');
+    final savedWindow = await _storage.read(key: 'user_window_id');
+    
+    setState(() {
+      branchId = int.tryParse(savedBranch ?? '1') ?? 1;
+      windowId = int.tryParse(savedWindow ?? '1') ?? 1;
+    });
+
     _fetchQueueAndStatus();
+    
+    // ИСПРАВЛЕНО: Добавлен фоновый WebSocket/Поллинг клиент для автообновления зала ожидания
+    _autoRefreshTimer = Timer.periodic(const Duration(seconds: 4), (timer) {
+      if (mounted) _fetchQueueAndStatus();
+    });
+  }
+
+  @override
+  void dispose() {
+    _autoRefreshTimer?.cancel(); // Очищаем таймер при выходе из панели оператора
+    super.dispose();
   }
 
   Future<Options> _getAuthOptions() async {
@@ -33,15 +62,14 @@ class _OperatorDashboardState extends State<OperatorDashboard> {
     return Options(headers: {'Authorization': 'Bearer $token'});
   }
 
-  // Настоящее чтение базы данных PostgreSQL с обходом ошибок Pydantic
   Future<void> _fetchQueueAndStatus() async {
-    setState(() => isLoading = true);
     try {
       final options = await _getAuthOptions();
       final response = await _dio.get('/api/tickets', options: options);
 
       if (response.statusCode == 200 && response.data != null) {
         final List data = response.data;
+        if (!mounted) return;
         setState(() {
           final allTickets = data.map((json) {
             return Ticket(
@@ -50,7 +78,6 @@ class _OperatorDashboardState extends State<OperatorDashboard> {
               sourceType: json['source_type']?.toString() ?? json['source']?.toString() ?? 'qr',
               status: json['status']?.toString() ?? 'waiting',
               serviceId: json['service_id']?.toString() ?? '1',
-              // Всеядный парсинг: примет от СУБД и число 1, и строку "1"
               windowNumber: json['window_number']?.toString() ?? json['window_id']?.toString(),
               clientToken: json['client_token']?.toString(),
               createdAt: json['created_at']?.toString() ?? '',
@@ -58,12 +85,11 @@ class _OperatorDashboardState extends State<OperatorDashboard> {
             );
           }).toList();
           
-          // Фильтруем только тех, кто реально ожидает в зале вызова
+          // Фильтруем талоны строго под выбранный филиал
           _queue = allTickets
-              .where((t) => t.status == 'waiting' || t.status == 'scheduled')
+              .where((t) => (t.status == 'waiting' || t.status == 'scheduled') && t.serviceId == branchId.toString())
               .toList();
 
-          // Ищем активный талон, привязанный к нашему окну
           final calledInThisWindow = allTickets.firstWhere(
             (t) => t.status == 'called' && t.windowNumber == windowId.toString(),
             orElse: () => Ticket(
@@ -75,13 +101,10 @@ class _OperatorDashboardState extends State<OperatorDashboard> {
         });
       }
     } catch (e) {
-      print('Ошибка получения данных очереди: $e');
-    } finally {
-      setState(() => isLoading = false);
+      print('Ошибка обновления данных очереди: $e');
     }
   }
 
-  // Функция вызова из ОБЩЕГО пуЛА (Предзапись / QR)
   Future<void> _callNext() async {
     if (currentTicket != null) return;
     try {
@@ -89,12 +112,9 @@ class _OperatorDashboardState extends State<OperatorDashboard> {
       final response = await _dio.post('/api/windows/$windowId/call-next', options: options);
 
       if (response.statusCode == 200 && response.data != null && response.data['ticket'] != null) {
+        if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Клиент успешно вызван из общего пула!'), backgroundColor: Colors.green),
-        );
-      } else {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(response.data['message'] ?? 'Общий пул пуст'), backgroundColor: Colors.orange),
+          SnackBar(content: Text('Клиент успешно вызван в Окно №$windowId!'), backgroundColor: Colors.green),
         );
       }
       _fetchQueueAndStatus();
@@ -103,21 +123,16 @@ class _OperatorDashboardState extends State<OperatorDashboard> {
     }
   }
 
-  // ИСПРАВЛЕННАЯ функция вызова из ЖИВОЙ очереди (FIFO эндпоинт Ромашки)
   Future<void> _callNextLive() async {
     if (currentTicket != null) return;
     try {
       final options = await _getAuthOptions();
-      // Вызываем строгий URL-эндпоинт Ромашки из main.py
       final response = await _dio.post('/api/windows/$windowId/call-live', options: options);
 
       if (response.statusCode == 200 && response.data != null && response.data['ticket'] != null) {
+        if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Клиент успешно вызван из ЖИВОЙ очереди!'), backgroundColor: Colors.green),
-        );
-      } else {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(response.data['message'] ?? 'Живая очередь пуста'), backgroundColor: Colors.orange),
+          SnackBar(content: Text('Клиент успешно вызван из живой очереди в Окно №$windowId!'), backgroundColor: Colors.green),
         );
       }
       _fetchQueueAndStatus();
@@ -131,13 +146,10 @@ class _OperatorDashboardState extends State<OperatorDashboard> {
     try {
       final options = await _getAuthOptions();
       await _dio.post('/api/tickets/${currentTicket!.id}/complete', options: options);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Обслуживание талона ${currentTicket!.number} завершено'), backgroundColor: Colors.green),
-      );
       setState(() => currentTicket = null);
       _fetchQueueAndStatus();
     } catch (e) {
-      print('Ошибка завершения: $e');
+      print('Ошибка завершения талона: $e');
     }
   }
 
@@ -146,13 +158,10 @@ class _OperatorDashboardState extends State<OperatorDashboard> {
     try {
       final options = await _getAuthOptions();
       await _dio.post('/api/tickets/${currentTicket!.id}/return', options: options);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Талон ${currentTicket!.number} возвращен в очередь'), backgroundColor: Colors.orange),
-      );
       setState(() => currentTicket = null);
       _fetchQueueAndStatus();
     } catch (e) {
-      print('Ошибка возврата: $e');
+      print('Ошибка возврата талона: $e');
     }
   }
   @override
@@ -160,7 +169,7 @@ class _OperatorDashboardState extends State<OperatorDashboard> {
     return Scaffold(
       backgroundColor: const Color(0xFFF5F7FA),
       appBar: AppBar(
-        title: Text('Рабочее место оператора — Окно № $windowId'),
+        title: Text('Рабочее место оператора — ОПС №$branchId, Окно №$windowId'),
         backgroundColor: const Color(0xFF0055A5),
         foregroundColor: Colors.white,
         actions: [
@@ -168,76 +177,68 @@ class _OperatorDashboardState extends State<OperatorDashboard> {
           IconButton(icon: const Icon(Icons.logout), onPressed: () => context.go('/login'))
         ],
       ),
-      body: isLoading
-          ? const Center(child: CircularProgressIndicator(color: Color(0xFF0055A5)))
-          : Row(
+      body: Row(
+        children: [
+          Container(
+            width: 310,
+            color: Colors.white,
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                // Левая боковая панель — Монитор зала ожидания СУБД
                 Container(
-                  width: 310,
-                  color: Colors.white,
-                  padding: const EdgeInsets.all(24),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF0055A5).withValues(alpha:0.08),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: const Color(0xFF0055A5).withValues(alpha:0.15)),
+                  ),
+                  child: Row(
                     children: [
-                      Container(
-                        padding: const EdgeInsets.all(16),
-                        decoration: BoxDecoration(
-                          color: const Color(0xFF0055A5).withOpacity(0.08),
-                          borderRadius: BorderRadius.circular(12),
-                          border: Border.all(color: const Color(0xFF0055A5).withOpacity(0.15)),
-                        ),
-                        child: Row(
-                          children: [
-                            const Icon(Icons.people, color: Color(0xFF0055A5), size: 28),
-                            const SizedBox(width: 12),
-                            Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                const Text('Ожидают в зале', style: TextStyle(color: Colors.grey, fontSize: 13)),
-                                Text(
-                                  '${_queue.length}',
-                                  style: const TextStyle(color: Color(0xFF0055A5), fontSize: 26, fontWeight: FontWeight.bold),
-                                ),
-                              ],
-                            ),
-                          ],
-                        ),
+                      const Icon(Icons.people, color: Color(0xFF0055A5), size: 28),
+                      const SizedBox(width: 12),
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text('Ожидают в зале', style: TextStyle(color: Colors.grey, fontSize: 13)),
+                          Text('${_queue.length}', style: const TextStyle(color: Color(0xFF0055A5), fontSize: 26, fontWeight: FontWeight.bold)),
+                        ],
                       ),
-                      const SizedBox(height: 20),
-                      if (_queue.isNotEmpty) Expanded(child: _buildQueuePreview()),
                     ],
                   ),
                 ),
-                // Центральная панель управления вызовами талонов
-                Expanded(
-                  child: Padding(
-                    padding: const EdgeInsets.all(40),
-                    child: Center(
-                      child: currentTicket == null ? _buildEmptyState() : _buildCurrentTicket(),
-                    ),
-                  ),
-                ),
+                const SizedBox(height: 20),
+                Expanded(child: _buildQueuePreview()),
               ],
             ),
+          ),
+          Expanded(
+            child: Padding(
+              padding: const EdgeInsets.all(40),
+              child: Center(
+                child: currentTicket == null ? _buildEmptyState() : _buildCurrentTicket(),
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 
   Widget _buildQueuePreview() {
     return Container(
       padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12), border: Border.all(color: Colors.grey!)),
+      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12), border: Border.all(color: Colors.grey)),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text('Монитор зала ожидания', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: Color(0xFF0055A5))),
+          const Text('Монитор зала ожидания (Автообновление)', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Color(0xFF0055A5))),
           const SizedBox(height: 8),
           Expanded(
             child: ListView.builder(
               itemCount: _queue.length,
               itemBuilder: (context, index) {
                 final ticket = _queue[index];
-                
                 String displayType = ticket.sourceType?.toUpperCase() ?? 'QR';
                 if (displayType == 'APPOINTMENT') displayType = 'Предзапись';
                 if (displayType == 'LIVE') displayType = 'Живая очередь';
@@ -264,7 +265,7 @@ class _OperatorDashboardState extends State<OperatorDashboard> {
     return Container(
       constraints: const BoxConstraints(maxWidth: 650),
       padding: const EdgeInsets.all(40),
-      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(20), boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 10)]),
+      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(20), boxShadow: [BoxShadow(color: Colors.black.withValues(alpha:0.05), blurRadius: 10)]),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
@@ -275,7 +276,7 @@ class _OperatorDashboardState extends State<OperatorDashboard> {
           SizedBox(
             width: double.infinity,
             child: ElevatedButton.icon(
-              onPressed: _queue.any((t) => t.sourceType?.toLowerCase() != 'live') ? _callNext : null,
+              onPressed: _queue.isNotEmpty ? _callNext : null,
               icon: const Icon(Icons.call),
               style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF0055A5), foregroundColor: Colors.white, padding: const EdgeInsets.symmetric(vertical: 16)),
               label: const Text('Вызвать следующего (Предзапись / QR)', style: TextStyle(fontSize: 16)),
@@ -285,10 +286,10 @@ class _OperatorDashboardState extends State<OperatorDashboard> {
           SizedBox(
             width: double.infinity,
             child: OutlinedButton.icon(
-              onPressed: _queue.any((t) => t.sourceType?.toLowerCase() == 'live') ? _callNextLive : null,
+              onPressed: _queue.isNotEmpty ? _callNextLive : null,
               icon: const Icon(Icons.flash_on),
               style: OutlinedButton.styleFrom(side: const BorderSide(color: Colors.orange), foregroundColor: Colors.orange, padding: const EdgeInsets.symmetric(vertical: 16)),
-              label: const Text('Вызвать из Живой очереди', style: TextStyle(fontSize: 16)),
+              label: const Text('Вызвать из Живой очереди (FIFO)', style: TextStyle(fontSize: 16)),
             ),
           ),
         ],
@@ -304,7 +305,7 @@ class _OperatorDashboardState extends State<OperatorDashboard> {
     return Container(
       constraints: const BoxConstraints(maxWidth: 650),
       padding: const EdgeInsets.all(40),
-      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(20), boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 10)]),
+      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(20), boxShadow: [BoxShadow(color: Colors.black.withValues(alpha:0.05), blurRadius: 10)]),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
