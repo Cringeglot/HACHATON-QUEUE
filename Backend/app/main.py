@@ -90,7 +90,7 @@ async def websocket_ticket(websocket: WebSocket, ticket_id: int, token: str = Qu
         db = SessionLocal()
         t = db.get(Ticket, ticket_id)
         if t:
-            resp = _t(t)
+            resp = _t(t, db)
             # ИСПОЛЬЗУЕМ .dict() или .model_dump() с предварительным переводом в dict
             # Либо используем встроенную функцию _t(t), которая возвращает TicketResponse, 
             # у которого датированные поля нужно перевести в строки:
@@ -216,12 +216,12 @@ def create_ticket(payload: TicketCreate, db: Session = Depends(get_db)):
     q.log_event(db, t.id, "created", f"source={payload.source}")
     db.commit()
     db.refresh(t)
-    return _t(t)
+    return _t(t, db)
 
 
 @app.get("/api/tickets", tags=["tickets"])
 def list_tickets(db: Session = Depends(get_db)):
-    return [_t(t) for t in db.query(Ticket).order_by(Ticket.id).all()]
+    return [_t(t, db) for t in db.query(Ticket).order_by(Ticket.id).all()]
 
 
 @app.get("/api/tickets/{ticket_id}", tags=["tickets"])
@@ -229,7 +229,7 @@ def get_ticket(ticket_id: int, db: Session = Depends(get_db)):
     t = db.get(Ticket, ticket_id)
     if not t:
         raise HTTPException(404, "Талон не найден")
-    return _t(t)
+    return _t(t, db)
 
 
 @app.post("/api/tickets/{ticket_id}/cancel", tags=["tickets"])
@@ -237,7 +237,7 @@ def cancel_ticket(ticket_id: int, db: Session = Depends(get_db)):
     try:
         t = q.cancel(db, ticket_id, "Отменён клиентом")
         db.commit()
-        resp = _t(t)
+        resp = _t(t, db)
         broadcast_ticket_update(ticket_id, resp.model_dump(mode='json')) # <--- Уведомляем фронт
         return resp
     except ValueError as e:
@@ -249,7 +249,7 @@ def complete_ticket(ticket_id: int, db: Session = Depends(get_db)):
     try:
         t = q.complete(db, ticket_id)
         db.commit()
-        resp = _t(t)
+        resp = _t(t, db)
         broadcast_ticket_update(ticket_id, resp.model_dump(mode='json')) # <--- Уведомляем фронт
         return resp
     except ValueError as e:
@@ -261,7 +261,7 @@ def return_ticket(ticket_id: int, db: Session = Depends(get_db)):
     try:
         t = q.return_to_queue(db, ticket_id, "Возврат оператором")
         db.commit()
-        return _t(t)
+        return _t(t, db)
     except ValueError as e:
         raise HTTPException(400, str(e))
 
@@ -271,7 +271,7 @@ def activate_ticket(ticket_id: int, db: Session = Depends(get_db)):
     try:
         t = q.activate(db, ticket_id)
         db.commit()
-        resp = _t(t)
+        resp = _t(t, db)
         broadcast_ticket_update(ticket_id, resp.model_dump(mode='json')) # Уведомляем фронтенд по WebSocket
         return resp
     except ValueError as e:
@@ -325,7 +325,7 @@ def call_next(window_id: int, db: Session = Depends(get_db), user: dict = Depend
         return {"ticket": None, "message": "Общий пул пуст"}
     
     db.refresh(t)
-    ticket_data = _t(t).model_dump(mode='json')
+    ticket_data = _t(t, db).model_dump(mode='json')
     broadcast_ticket_update(t.id, ticket_data) # Уведомляем Flutter через WebSocket
     return {"ticket": ticket_data, "pool": "recorded"}
 
@@ -347,7 +347,7 @@ def call_live(window_id: int, db: Session = Depends(get_db), user: dict = Depend
         return {"ticket": None, "message": "Живая очередь пуста"}
         
     db.refresh(t)
-    ticket_data = _t(t).model_dump(mode='json')
+    ticket_data = _t(t, db).model_dump(mode='json')
     broadcast_ticket_update(t.id, ticket_data) # Уведомляем Flutter через WebSocket
     return {"ticket": ticket_data, "pool": "live"}
 
@@ -359,7 +359,7 @@ def close_window(window_id: int, db: Session = Depends(get_db), user: dict = Dep
     db.commit()
     return {
         "closed": window_id,
-        "returned": _t(returned) if returned else None,
+        "returned": _t(returned, db) if returned else None,
     }
 
 
@@ -432,12 +432,17 @@ def _next_code(db: Session) -> str:
     return f"A-{n + 1:03d}"
 
 
-def _t(t: Ticket) -> TicketResponse:
+def _t(t: Ticket, db: Session | None = None) -> TicketResponse:
+
+    wait_min = 0
+    if db is not None:
+        wait_min = q.estimate_wait_minutes(db, t)
+
     dct = {
         "id": t.id,
         "number": t.public_code,
         "status": t.status,
-        "estimated_wait_min": 0,
+        "estimated_wait_min": wait_min,
         "window_number": str(t.window_id) if t.window_id is not None else None,
         "source_type": t.source,
         "service_id": t.service_id,
