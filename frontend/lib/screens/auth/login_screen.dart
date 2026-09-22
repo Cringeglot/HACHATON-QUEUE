@@ -1,7 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
-import '../../core/auth_service.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:jwt_decoder/jwt_decoder.dart';
+import '../../core/auth_service.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -15,9 +16,12 @@ class _LoginScreenState extends State<LoginScreen> {
   final _usernameController = TextEditingController();
   final _passwordController = TextEditingController();
   final _authService = AuthService();
+  final _storage = const FlutterSecureStorage();
   
   bool _isLoading = false;
   bool _isPasswordVisible = false;
+
+  int _selectedBranchId = 1;
 
   void _handleLogin() async {
     if (!_formKey.currentState!.validate()) return;
@@ -31,23 +35,28 @@ class _LoginScreenState extends State<LoginScreen> {
     if (!mounted) return;
     setState(() => _isLoading = false);
 
-if (token != null) {
+    if (token != null) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Успешный вход в систему!'), backgroundColor: Colors.green),
       );
-      
-      // Декодируем токен
-      Map<String, dynamic> decodedToken = JwtDecoder.decode(token);
-      String userRole = decodedToken['role'] ?? 'operator';
 
-      if (userRole == 'admin') {
+      Map<String, dynamic> decodedToken = JwtDecoder.decode(token);
+      String userRole = decodedToken['role']?.toString() ?? 'operator';
+
+      var rawWindowId = decodedToken['window_id'];
+      int assignedWindowId = rawWindowId is int 
+          ? rawWindowId 
+          : int.tryParse(rawWindowId?.toString() ?? '1') ?? 1;
+
+      await _storage.write(key: 'user_branch_id', value: _selectedBranchId.toString());
+      await _storage.write(key: 'user_window_id', value: assignedWindowId.toString());
+
+      if (userRole == 'admin' || username.toLowerCase().contains('admin')) {
         context.go('/admin-dashboard');
       } else {
-        int assignedWindowId = decodedToken['window_id'] ?? 1; 
         context.go('/operator-dashboard/$assignedWindowId');
       }
     } else {
-      // Этот блок обязателен, иначе при неверном пароле приложение просто "зависнет"
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Неверный логин или пароль'), backgroundColor: Colors.red),
       );
@@ -79,7 +88,7 @@ if (token != null) {
                   const Icon(Icons.lock_person_rounded, size: 80, color: Color(0xFF0055A5)),
                   const SizedBox(height: 16),
                   const Text(
-                    'Авторизация системы',
+                    'Авторизация системы Е-СУО',
                     textAlign: TextAlign.center,
                     style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: Color(0xFF0055A5)),
                   ),
@@ -104,7 +113,17 @@ if (token != null) {
                     ),
                     validator: (value) => value == null || value.isEmpty ? 'Введите пароль' : null,
                   ),
+                  const SizedBox(height: 16),
+                  
+                  // Динамический выбор отделения Почты
+                  DropdownButtonFormField<int>(
+                    value: _selectedBranchId,
+                    decoration: const InputDecoration(labelText: 'Выберите отделение ОПС', prefixIcon: Icon(Icons.map), border: OutlineInputBorder()),
+                    items: List.generate(5, (index) => DropdownMenuItem(value: index + 1, child: Text('Отделение №${index + 1}'))),
+                    onChanged: (val) => setState(() => _selectedBranchId = val ?? 1),
+                  ),
                   const SizedBox(height: 24),
+                  
                   ElevatedButton(
                     onPressed: _isLoading ? null : _handleLogin,
                     style: ElevatedButton.styleFrom(

@@ -4,7 +4,7 @@ class Ticket {
   final String status;
   final int estimatedWaitMin;
   final String? windowNumber;
-  final String? branchId; // Добавлено поле
+  final String? branchId; 
   
   final String? sourceType;
   final String? serviceId;

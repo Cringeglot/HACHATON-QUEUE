@@ -28,13 +28,17 @@ Future<Map<String, String>?> createBooking(String date, String time, String serv
     }
 
     try {
+    
+    final pastTime = DateTime.now().subtract(const Duration(hours: 24));
+    final forcedDate = pastTime.toIso8601String().split('.')[0]; 
+
       final response = await _dio.post(
         '/api/tickets',
         data: {
           'branch_id': int.tryParse(branchId) ?? 1,
           'service_id': int.tryParse(serviceId) ?? 1,
           'source': 'appointment',
-          'scheduled_at': '${date}T$time:00',
+          'scheduled_at': forcedDate, // Было: '${date}T$time:00'
         },
       );
 
@@ -75,13 +79,13 @@ Future<Map<String, String>?> createQrTicket(String branchId, String serviceId) a
         data: {
           'branch_id': int.tryParse(branchId) ?? 1,
           'service_id': int.tryParse(serviceId) ?? 1,
-          'source': 'qr' // Бэкенд поймет, что это талон из отделения
+          'source': 'qr' 
         },
       );
 
       if (response.statusCode == 200 || response.statusCode == 201) {
         final data = response.data;
-        final token = data['token'] ?? data['clientToken'] ?? data['client_token'] ?? '1'; // Фолбэк на 1 для WS бэкенда
+        final token = data['token'] ?? data['clientToken'] ?? data['client_token'] ?? '1'; 
         final ticketId = data['id'] ?? data['ticketId'] ?? data['ticket_id'];
 
         if (ticketId != null) {
@@ -97,7 +101,7 @@ Future<Map<String, String>?> createQrTicket(String branchId, String serviceId) a
     return null;
   }
 
-  // 3. Получение статуса талона
+
   Future<Ticket?> getTicketStatus(String ticketId, String clientToken) async {
     if (_useMock) {
       await Future.delayed(const Duration(milliseconds: 500));
@@ -125,7 +129,6 @@ Future<Map<String, String>?> createQrTicket(String branchId, String serviceId) a
     return null;
   }
 
-  // 4. Отмена талона
   Future<bool> cancelTicket(String ticketId, String clientToken) async {
     if (_useMock) {
       await Future.delayed(const Duration(milliseconds: 500));
@@ -144,6 +147,23 @@ Future<Map<String, String>?> createQrTicket(String branchId, String serviceId) a
       return false;
     }
   }
+
+
+Future<bool> activateTicket(String ticketId) async {
+  if (_useMock) {
+    await Future.delayed(const Duration(milliseconds: 500));
+    return true;
+  }
+
+  try {
+    final response = await _dio.post('/api/tickets/$ticketId/activate');
+    return response.statusCode == 200;
+  } catch (e) {
+    print('Ошибка активации талона: $e');
+    return false;
+  }
+}
+
 Future<List<Map<String, dynamic>>> getBranches() async {
   if (_useMock) {
     return [
@@ -165,7 +185,6 @@ Future<List<Map<String, dynamic>>> getBranches() async {
     print('Ошибка загрузки отделений: $e');
   }
   
-  // Фолбэк на случай недоступности API
   return [
     {'id': 1, 'name': 'Москва-Тверская (Отделение №1)'}
   ];

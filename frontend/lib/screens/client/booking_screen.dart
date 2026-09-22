@@ -6,8 +6,8 @@ import '../../core/api_client.dart';
 
 class BookingScreen extends StatefulWidget {
   final String serviceName;
-  final String serviceId; // Добавлено: идентификатор услуги
-  final String branchId;  // Добавлено: идентификатор отделения
+  final String serviceId; 
+  final String branchId;  
 
   const BookingScreen({
     super.key, 
@@ -31,8 +31,8 @@ class _BookingScreenState extends State<BookingScreen> {
     final DateTime? picked = await showDatePicker(
       context: context,
       initialDate: selectedDate,
-      firstDate: DateTime.now(), // Нельзя записаться в прошлое
-      lastDate: DateTime.now().add(const Duration(days: 14)), // Запись на 2 недели вперед
+      firstDate: DateTime.now(), 
+      lastDate: DateTime.now().add(const Duration(days: 14)), 
       builder: (context, child) {
         return Theme(
           data: Theme.of(context).copyWith(
@@ -57,9 +57,6 @@ Future<void> _createBooking() async {
 
   final formattedDate = DateFormat('yyyy-MM-dd').format(selectedDate);
   
-  // Заменяем хардкод 's1' на динамические параметры.
-  // Внимание: не забудьте обновить сигнатуру createBooking в ApiClient, 
-  // чтобы она принимала branchId.
   final result = await ApiClient().createBooking(
     formattedDate, 
     selectedTime!, 

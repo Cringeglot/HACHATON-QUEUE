@@ -10,7 +10,7 @@ class ServiceSelectionScreen extends StatefulWidget {
 }
 
 class _ServiceSelectionScreenState extends State<ServiceSelectionScreen> {
-  int? _selectedBranchId; // Меняем String? на int?, так как бэкенд ждет ID числом
+  int? _selectedBranchId;
   List<Map<String, dynamic>> _branches = [];
   bool _isLoadingBranches = true;
 
@@ -47,6 +47,73 @@ class _ServiceSelectionScreenState extends State<ServiceSelectionScreen> {
       case 'account_balance_wallet': return Icons.account_balance_wallet;
       default: return Icons.more_horiz;
     }
+  }
+
+  // Диалог выбора формата записи для конкретной услуги
+  void _showServiceActionSheet(Map<String, String> service) {
+    if (_selectedBranchId == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Пожалуйста, выберите отделение')),
+      );
+      return;
+    }
+
+    showModalBottomSheet(
+      context: context,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (context) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.all(20.0),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  service['name']!,
+                  style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(height: 16),
+                ListTile(
+                  leading: const Icon(Icons.calendar_month, color: Color(0xFF0055A5)),
+                  title: const Text('Записаться на время'),
+                  subtitle: const Text('Предварительная запись на выбранную дату'),
+                  onTap: () {
+                    Navigator.pop(context);
+                    context.push(
+                      '/booking',
+                      extra: {
+                        'serviceName': service['name']!,
+                        'serviceId': service['id']!,
+                        'branchId': _selectedBranchId.toString(),
+                      },
+                    );
+                  },
+                ),
+                const Divider(),
+                ListTile(
+                  leading: const Icon(Icons.qr_code_2, color: Color(0xFF0055A5)),
+                  title: const Text('Я в отделении (взять QR-талон)'),
+                  subtitle: const Text('Получить талон в живую очередь сейчас'),
+                  onTap: () {
+                    Navigator.pop(context);
+                    context.push(
+                      '/qr-entry',
+                      extra: {
+                        'branchId': _selectedBranchId.toString(),
+                        'serviceId': service['id']!, // Передается ID именно выбранной услуги!
+                      },
+                    );
+                  },
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
   }
 
   @override
@@ -90,7 +157,7 @@ class _ServiceSelectionScreenState extends State<ServiceSelectionScreen> {
                 const SizedBox(height: 32),
                 
                 if (_selectedBranchId != null) ...[
-                  const Text('Выберите услугу для записи:', style: TextStyle(fontSize: 18)),
+                  const Text('Выберите услугу:', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
                   const SizedBox(height: 16),
                   ...services.map((service) => Card(
                     elevation: 2,
@@ -100,43 +167,10 @@ class _ServiceSelectionScreenState extends State<ServiceSelectionScreen> {
                       leading: Icon(_getIcon(service['icon']!), color: const Color(0xFF0055A5), size: 32),
                       title: Text(service['name']!, style: const TextStyle(fontWeight: FontWeight.w500)),
                       trailing: const Icon(Icons.arrow_forward_ios, size: 16),
-                      onTap: () {
-                        context.push(
-                          '/booking',
-                          extra: {
-                            'serviceName': service['name']!,
-                            'serviceId': service['id']!,
-                            'branchId': _selectedBranchId.toString(),
-                          },
-                        );
-                      },
+                      onTap: () => _showServiceActionSheet(service),
                     ),
                   )),
                 ],
-
-                const Divider(height: 48),
-                Center(
-                  child: TextButton.icon(
-                    onPressed: () {
-                      if (_selectedBranchId == null) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(content: Text('Пожалуйста, выберите отделение')),
-                        );
-                        return;
-                      }
-                      context.push('/qr-entry', extra: {
-                        'branchId': _selectedBranchId.toString(),
-                        'serviceId': '1', 
-                      });
-                    },
-                    icon: const Icon(Icons.qr_code_scanner),
-                    label: const Text('Я уже в отделении (получить QR-талон)'),
-                    style: TextButton.styleFrom(
-                      foregroundColor: const Color(0xFF0055A5),
-                      padding: const EdgeInsets.all(16),
-                    ),
-                  ),
-                ),
               ],
             ),
           ),

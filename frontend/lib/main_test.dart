@@ -5,19 +5,23 @@ import 'screens/client/ticket_screen.dart';
 import 'screens/client/service_selection_screen.dart';
 import 'screens/client/booking_screen.dart';
 import 'screens/client/qr_entry_screen.dart';
-import 'screens/auth/login_screen.dart'; // Ваша авторизация
-import 'screens/operators/operator_dashboard.dart'; // Ваш оператор
-import 'screens/admin/admin_dashboard.dart'; // Ваш админ
+import 'screens/auth/login_screen.dart'; 
+import 'screens/operators/operator_dashboard.dart'; 
+import 'screens/admin/admin_dashboard.dart'; 
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // Принудительно открываем экран логина сотрудников как стартовую страницу в тестах
+  
   final String initialRoute = '/login';
 
   final GoRouter router = GoRouter(
     initialLocation: initialRoute,
     routes: [
+      GoRoute(
+        path: '/',
+        redirect: (context, state) => '/login',
+      ),
       GoRoute(
         path: '/client-services',
         builder: (context, state) => const ServiceSelectionScreen(),
@@ -25,6 +29,10 @@ void main() async {
       GoRoute(
         path: '/login',
         builder: (context, state) => const LoginScreen(),
+      ),
+      GoRoute(
+        path: '/operator-dashboard/:windowId',
+        builder: (context, state) => const OperatorDashboard(),
       ),
       GoRoute(
         path: '/operator-dashboard',

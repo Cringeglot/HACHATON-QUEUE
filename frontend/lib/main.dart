@@ -1,38 +1,48 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
-import 'core/session_storage.dart';
 import 'screens/client/ticket_screen.dart';
 import 'screens/client/service_selection_screen.dart';
 import 'screens/client/booking_screen.dart';
 import 'screens/client/qr_entry_screen.dart';
+import 'screens/auth/login_screen.dart'; 
+import 'screens/operators/operator_dashboard.dart'; 
+import 'screens/admin/admin_dashboard.dart'; 
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
- //await SessionStorage.clearSession();
-
-  final savedSession = await SessionStorage.getSession();
-  
-  final String initialRoute = (savedSession != null)
-      ? '/ticket?ticketId=${savedSession['ticketId']}&clientToken=${savedSession['clientToken']}'
-      : '/';
+  final String initialRoute = '/login';
 
   final GoRouter router = GoRouter(
     initialLocation: initialRoute,
     routes: [
       GoRoute(
-        path: '/',
+        path: '/login',
+        builder: (context, state) => const LoginScreen(),
+      ),
+      GoRoute(
+        path: '/client-services',
         builder: (context, state) => const ServiceSelectionScreen(),
+      ),
+      GoRoute(
+        path: '/operator-dashboard/:windowId',
+        builder: (context, state) => const OperatorDashboard(),
+      ),
+      GoRoute(
+        path: '/operator-dashboard',
+        builder: (context, state) => const OperatorDashboard(),
+      ),
+      GoRoute(
+        path: '/admin-dashboard',
+        builder: (context, state) => const AdminDashboard(),
       ),
       GoRoute(
         path: '/booking',
         builder: (context, state) {
-          // Принимаем словарь с данными вместо одиночной строки
           final extra = state.extra as Map<String, dynamic>?;
-
           final serviceName = extra?['serviceName']?.toString() ?? 'Неизвестная услуга';
-          final serviceId = extra?['serviceId']?.toString() ?? 's1';
-          final branchId = extra?['branchId']?.toString() ?? '101000';
+          final serviceId = extra?['serviceId']?.toString() ?? '1';
+          final branchId = extra?['branchId']?.toString() ?? '1';
 
           return BookingScreen(
             serviceName: serviceName,
@@ -41,7 +51,7 @@ void main() async {
           );
         },
       ),
-        GoRoute(
+      GoRoute(
         path: '/qr-entry',
         builder: (context, state) {
           final extra = state.extra as Map<String, dynamic>?;
@@ -55,7 +65,6 @@ void main() async {
         path: '/ticket',
         builder: (context, state) {
           final extra = state.extra as Map<String, dynamic>?;
-          
           final ticketId = state.uri.queryParameters['ticketId'] ?? extra?['ticketId'] ?? '';
           final clientToken = state.uri.queryParameters['clientToken'] ?? extra?['clientToken'] ?? '';
           
@@ -79,7 +88,7 @@ class EQueueApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp.router(
-      title: 'Е-СУО ПочтаТеч',
+      title: 'Е-СУО ПочтаТеч (Тестовая сборка)',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         primaryColor: const Color(0xFF0055A5),

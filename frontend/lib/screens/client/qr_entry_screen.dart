@@ -23,7 +23,6 @@ class _QrEntryScreenState extends State<QrEntryScreen> {
   Future<void> _simulateQrScan() async {
     setState(() => isLoading = true);
 
-    // Передаем данные в обновленный метод
     final result = await ApiClient().createQrTicket(widget.branchId, widget.serviceId);
 
     if (!mounted) return;

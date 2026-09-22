@@ -16,7 +16,6 @@ class _AdminDashboardState extends State<AdminDashboard> {
   final _storage = const FlutterSecureStorage();
 
   bool _loading = false;
-  String? _error;
 
   int totalTickets = 0;
   int waitingTickets = 0;
@@ -24,10 +23,21 @@ class _AdminDashboardState extends State<AdminDashboard> {
   int completedTickets = 0;
   List<dynamic> _logs = [];
 
+  // ИСПРАВЛЕНО: Текстовые контроллеры для ввода динамических параметров (Убран хардкод)
+  final _targetWindowController = TextEditingController(text: '1');
+  final _targetBranchController = TextEditingController(text: '1');
+
   @override
   void initState() {
     super.initState();
     _loadAdminData();
+  }
+
+  @override
+  void dispose() {
+    _targetWindowController.dispose();
+    _targetBranchController.dispose();
+    super.dispose();
   }
 
   Future<Options> _getAuthOptions() async {
@@ -38,7 +48,6 @@ class _AdminDashboardState extends State<AdminDashboard> {
   Future<void> _loadAdminData() async {
     setState(() {
       _loading = true;
-      _error = null;
     });
 
     try {
@@ -62,9 +71,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
         });
       }
     } catch (e) {
-      setState(() {
-        _error = 'Не удалось получить данные бэкенда: $e';
-      });
+      print('Ошибка загрузки данных аналитики: $e');
     } finally {
       setState(() {
         _loading = false;
@@ -72,19 +79,20 @@ class _AdminDashboardState extends State<AdminDashboard> {
     }
   }
 
-  // 1. АДМИНИСТРАТИВНАЯ ФУНКЦИЯ: Открыть новое окно в СУБД
   Future<void> _handleOpenWindow() async {
     try {
       final options = await _getAuthOptions();
-      // Шлём POST-запрос согласно схеме WindowOpen Ромы Ромашова
+      final branchId = int.tryParse(_targetBranchController.text.trim()) ?? 1;
+      
       final response = await _dio.post(
         '/api/windows', 
-        data: {'branch_id': 1, 'number': '${totalTickets + 2}'}, 
+        data: {'branch_id': branchId, 'number': '${totalTickets + 1}'}, 
         options: options
       );
       if (response.statusCode == 200) {
+        if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Успешно открыто новое рабочее Окно №${response.data['number']}!'), backgroundColor: Colors.green),
+          SnackBar(content: Text('В ОПС №$branchId успешно добавлено Окно №${response.data['number']}!'), backgroundColor: Colors.green),
         );
         _loadAdminData();
       }
@@ -93,35 +101,37 @@ class _AdminDashboardState extends State<AdminDashboard> {
     }
   }
 
-  // 2. АДМИНИСТРАТИВНАЯ ФУНКЦИЯ: Принудительно закрыть окно (с возвратом клиента в очередь)
   Future<void> _handleCloseWindow() async {
     try {
       final options = await _getAuthOptions();
-      // Вызываем эндпоинт закрытия окна №1 Ромы Ромашова
-      final response = await _dio.post('/api/windows/1/close', options: options);
+      final windowNum = _targetWindowController.text.trim();
+      
+      final response = await _dio.post('/api/windows/$windowNum/close', options: options);
       if (response.statusCode == 200) {
+        if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Окно №1 принудительно закрыто. Активный клиент возвращен в очередь!'), backgroundColor: Colors.orange),
+          SnackBar(content: Text('Окно №$windowNum принудительно закрыто! Активный талон сброшен в очередь.'), backgroundColor: Colors.orange),
         );
         _loadAdminData();
       }
     } catch (e) {
-      print('Ошибка закрытия окна: $e');
+      print('Ошибка принудительного закрытия окна: $e');
     }
   }
 
-  // 3. АДМИНИСТРАТИВНАЯ ФУНКЦИЯ: Добавить новое отделение Почты России
   Future<void> _handleCreateBranch() async {
     try {
       final options = await _getAuthOptions();
+      final branchId = _targetBranchController.text.trim();
       final response = await _dio.post(
         '/api/branches', 
-        data: {'name': 'Филиал Москва-Покровка (Отделение №${totalTickets + 3})'}, 
+        data: {'name': 'Новый филиал Почты (ОПС №$branchId)'}, 
         options: options
       );
       if (response.statusCode == 200) {
+        if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('В систему успешно добавлено отделение: ${response.data['name']}'), backgroundColor: Colors.green),
+          SnackBar(content: Text('В систему занесено отделение: ${response.data['name']}'), backgroundColor: Colors.green),
         );
         _loadAdminData();
       }
@@ -134,7 +144,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
     return Scaffold(
       backgroundColor: const Color(0xFFF5F7FA),
       appBar: AppBar(
-        title: const Text('Панель руководителя отделения — Управление СУБД'),
+        title: const Text('Панель руководителя отделения — Живая аналитика СУБД'),
         backgroundColor: const Color(0xFF0055A5),
         foregroundColor: Colors.white,
         actions: [
@@ -152,7 +162,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
               if (_loading) const LinearProgressIndicator(color: Color(0xFF0055A5)),
               const SizedBox(height: 16),
               
-              // Живые счетчики талонов
+              // Адаптивный ряд карточек статистики
               Wrap(
                 spacing: 16,
                 runSpacing: 16,
@@ -165,34 +175,58 @@ class _AdminDashboardState extends State<AdminDashboard> {
               ),
               const SizedBox(height: 32),
               
-              // НОВЫЙ ИНТЕРАКТИВНЫЙ ПУЛЬТ УПРАВЛЕНИЯ ДЛЯ АДМИНА (Функции Ромы Слепушкина)
               const Text('Пульт административного управления ОПС', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Color(0xFF0055A5))),
               const SizedBox(height: 16),
               Card(
                 color: Colors.white,
                 child: Padding(
-                  padding: const EdgeInsets.all(20),
-                  child: Wrap(
-                    spacing: 16,
-                    runSpacing: 16,
+                  padding: const EdgeInsets.all(24),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      ElevatedButton.icon(
-                        onPressed: _handleOpenWindow,
-                        icon: const Icon(Icons.add_box),
-                        style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF0055A5), foregroundColor: Colors.white, padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16)),
-                        label: const Text('Открыть новое Окно оператора', style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold)),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: TextField(
+                              controller: _targetBranchController,
+                              keyboardType: TextInputType.number,
+                              decoration: const InputDecoration(labelText: 'Целевой ID филиала (ОПС)', border: OutlineInputBorder(), prefixIcon: Icon(Icons.map)),
+                            ),
+                          ),
+                          const SizedBox(width: 16),
+                          Expanded(
+                            child: TextField(
+                              controller: _targetWindowController,
+                              keyboardType: TextInputType.number,
+                              decoration: const InputDecoration(labelText: 'Целевой номер Окна оператора', border: OutlineInputBorder(), prefixIcon: Icon(Icons.desktop_windows)),
+                            ),
+                          ),
+                        ],
                       ),
-                      ElevatedButton.icon(
-                        onPressed: _handleCloseWindow,
-                        icon: const Icon(Icons.disabled_by_default),
-                        style: ElevatedButton.styleFrom(backgroundColor: Colors.red, foregroundColor: Colors.white, padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16)),
-                        label: const Text('Закрыть Окно №1 (Вернуть клиента)', style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold)),
-                      ),
-                      ElevatedButton.icon(
-                        onPressed: _handleCreateBranch,
-                        icon: const Icon(Icons.domain_add),
-                        style: ElevatedButton.styleFrom(backgroundColor: Colors.green, foregroundColor: Colors.white, padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16)),
-                        label: const Text('Зарегистрировать новое Отделение', style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold)),
+                      const SizedBox(height: 24),
+                      Wrap(
+                        spacing: 16,
+                        runSpacing: 16,
+                        children: [
+                          ElevatedButton.icon(
+                            onPressed: _handleOpenWindow,
+                            icon: const Icon(Icons.add_box),
+                            style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF0055A5), foregroundColor: Colors.white, padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16)),
+                            label: const Text('Открыть новое Окно оператора', style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold)),
+                          ),
+                          ElevatedButton.icon(
+                            onPressed: _handleCloseWindow,
+                            icon: const Icon(Icons.disabled_by_default),
+                            style: ElevatedButton.styleFrom(backgroundColor: Colors.red, foregroundColor: Colors.white, padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16)),
+                            label: const Text('Принудительно закрыть Окно', style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold)),
+                          ),
+                          ElevatedButton.icon(
+                            onPressed: _handleCreateBranch,
+                            icon: const Icon(Icons.domain_add),
+                            style: ElevatedButton.styleFrom(backgroundColor: Colors.green, foregroundColor: Colors.white, padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16)),
+                            label: const Text('Зарегистрировать ОПС', style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold)),
+                          ),
+                        ],
                       ),
                     ],
                   ),
@@ -227,7 +261,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
                     Text(value, style: TextStyle(fontSize: 26, fontWeight: FontWeight.bold, color: color)),
                   ],
                 ),
-              ),
+                  ),
             ],
           ),
         ),
