@@ -21,9 +21,14 @@ ALGORITHM = 'HS256'
 bcrypt_context = CryptContext(schemes=['bcrypt'], deprecated='auto')
 oauth2_bearer = OAuth2PasswordBearer(tokenUrl='auth/token')
 
+class CreateClientRequest(BaseModel):
+    username: str 
+    password: str 
+
 class CreateUserRequest(BaseModel):
     username: str 
     password: str 
+    role: str
 
 class Token(BaseModel):
     access_token: str 
@@ -37,23 +42,17 @@ def get_db():
         db.close()
     
 db_dependency = Annotated[Session, Depends(get_db)]
-
-@router.post("/", status_code=status.HTTP_201_CREATED)
-async def create_user(db: db_dependency, create_user_request: CreateUserRequest):
-    create_user_model = User(
-    username=create_user_request.username,
-    hashed_password=bcrypt_context.hash(create_user_request.password)
-        )
-
-    db.add(create_user_model)
-    db.commit()
+CLIENT = 0
+OPERATOR = 1
+DIRECTOR = 2
+ADMIN = 3
 
 @router.post("/token", response_model=Token)
 async def login_for_access_token(form_data: Annotated[OAuth2PasswordRequestForm, Depends()], db: db_dependency):
     user = authenticate_user(form_data.username, form_data.password, db) 
     if not user:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail='Could not validate user')
-    token = create_access_token(user.username, user.id, timedelta(minutes=20))
+    token = create_access_token(user.username, user.id, user.role, timedelta(hours=12))
     return {'access_token': token, 'token_type': 'bearer'}
 
 def authenticate_user(username: str, password: str, db):
@@ -64,19 +63,65 @@ def authenticate_user(username: str, password: str, db):
         return False 
     return user                         
 
-def create_access_token(username: str, user_id: int, expires_delta: timedelta):
-    encode = {'sub': username, 'id': user_id}
+def create_access_token(username: str, user_id: int, role: int, expires_delta: timedelta):
+    encode = {'sub': username, 'id': user_id, 'role': role}
     expires = datetime.utcnow() + expires_delta 
     encode.update({'exp': expires})
     return jwt.encode(encode, SECRET_KEY, algorithm=ALGORITHM)
+
+def require_role(roles: list):
+    def checker(user: dict = Depends(get_current_user)) -> dict:
+        if user.get('role') not in roles:
+            print(user.get('role'), user.get('username'), user.get('id'))
+            raise HTTPException(status_code=403, detail="Forbidden")
+        return user
+    return checker
 
 async def get_current_user(token: Annotated[str, Depends(oauth2_bearer)]):
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         username: str = payload.get('sub')
         user_id: int = payload.get('id')
+        user_role: int = payload.get('role')
         if username is None or user_id is None:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail='Could not validate user')
-        return {'username': username, 'id': user_id}
+        return {'username': username, 'id': user_id, 'role': user_role}
     except JWTError:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail='Could not validate user')
+
+def get_role_id(request: CreateUserRequest):
+    if request.role == "admin":
+        return 3
+    elif request.role == "director": 
+        return 2
+    elif request.role == "operator":
+        return 1
+    else:
+        return -1
+
+@router.post("/", status_code=status.HTTP_201_CREATED)
+async def create_user_endpoint(db: db_dependency, create_user_request: CreateUserRequest, user: dict = Depends(require_role([DIRECTOR, ADMIN]))):
+    role_id = get_role_id(create_user_request)
+    if (role_id == -1):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='No such role: {create_user_request.role}')
+    
+    if (user.get("role") <= role_id):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=f'Your role is not enought to create {create_user_request.role}')
+    return create_user(db, create_user_request)
+
+def create_user(db: Session, create_user_request: CreateUserRequest):
+    role_id = get_role_id(create_user_request)
+    if (role_id == -1):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='No such role: {create_user_request.role}')
+    user_model = User(
+    username=create_user_request.username,
+    hashed_password=bcrypt_context.hash(create_user_request.password),
+    role=role_id
+        )
+    is_username_exist = db.query(User).filter(User.username  == user_model.username).first()
+    if is_username_exist:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail='Username is already taken')
+    else:
+        db.add(user_model)
+        db.commit()
+    return user_model

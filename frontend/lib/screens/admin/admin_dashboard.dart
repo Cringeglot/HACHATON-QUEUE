@@ -1,6 +1,8 @@
-
 import 'package:flutter/material.dart';
-
+import 'package:dio/dio.dart';
+import 'package:go_router/go_router.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import '../../core/app_config.dart';
 
 class AdminDashboard extends StatefulWidget {
   const AdminDashboard({super.key});
@@ -10,30 +12,20 @@ class AdminDashboard extends StatefulWidget {
 }
 
 class _AdminDashboardState extends State<AdminDashboard> {
+  final Dio _dio = Dio(BaseOptions(baseUrl: AppConfig.httpBaseUrl));
+  final _storage = const FlutterSecureStorage();
 
-
-  // Пока backend не предоставил отдельные admin endpoints,
-  // здесь нет выдуманных значений статистики.
   bool _loading = false;
-  String? _error;
 
-  final TextEditingController bookingDueController =
-      TextEditingController();
+  int totalTickets = 0;
+  int waitingTickets = 0;
+  int calledTickets = 0;
+  int completedTickets = 0;
+  List<dynamic> _logs = [];
 
-  final TextEditingController bookingEarlyController =
-      TextEditingController();
-
-  final TextEditingController qrController =
-      TextEditingController();
-
-  final TextEditingController liveQueueController =
-      TextEditingController();
-
-  final TextEditingController waitBonusController =
-      TextEditingController();
-
-  final TextEditingController maxWaitController =
-      TextEditingController();
+  // ИСПРАВЛЕНО: Текстовые контроллеры для ввода динамических параметров (Убран хардкод)
+  final _targetWindowController = TextEditingController(text: '1');
+  final _targetBranchController = TextEditingController(text: '1');
 
   @override
   void initState() {
@@ -43,174 +35,206 @@ class _AdminDashboardState extends State<AdminDashboard> {
 
   @override
   void dispose() {
-    bookingDueController.dispose();
-    bookingEarlyController.dispose();
-    qrController.dispose();
-    liveQueueController.dispose();
-    waitBonusController.dispose();
-    maxWaitController.dispose();
+    _targetWindowController.dispose();
+    _targetBranchController.dispose();
     super.dispose();
+  }
+
+  Future<Options> _getAuthOptions() async {
+    final token = await _storage.read(key: 'jwt_token');
+    return Options(headers: {'Authorization': 'Bearer $token'});
   }
 
   Future<void> _loadAdminData() async {
     setState(() {
       _loading = true;
-      _error = null;
     });
 
     try {
-      // Здесь намеренно нет фиктивного API-вызова.
-      //
-      // Сейчас ApiClient не содержит admin endpoints.
-      // Когда появится api_router.dart, сюда подключим:
-      // - статистику;
-      // - окна;
-      // - очередь;
-      // - аномалии;
-      // - настройки приоритета.
-      //
-      // Не придумываем endpoint заранее.
+      final options = await _getAuthOptions();
+      
+      final response = await _dio.get('/api/analytics', options: options);
+      if (response.statusCode == 200) {
+        final data = response.data;
+        setState(() {
+          totalTickets = data['total'] ?? 0;
+          waitingTickets = data['waiting'] ?? 0;
+          calledTickets = data['called'] ?? 0;
+          completedTickets = data['completed'] ?? 0;
+        });
+      }
 
-      await Future<void>.delayed(Duration.zero);
+      final logsResponse = await _dio.get('/api/logs', options: options);
+      if (logsResponse.statusCode == 200) {
+        setState(() {
+          _logs = logsResponse.data;
+        });
+      }
     } catch (e) {
-      if (!mounted) return;
-
-      setState(() {
-        _error = 'Не удалось загрузить данные: $e';
-      });
+      print('Ошибка загрузки данных аналитики: $e');
     } finally {
-  if (mounted) {
-    setState(() {
-      _loading = false;
-    });
-  }
-}
+      setState(() {
+        _loading = false;
+      });
+    }
   }
 
-  void _savePriorityConfig() {
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text(
-          'API для сохранения настроек приоритета пока не подключён',
-        ),
-      ),
-    );
+  Future<void> _handleOpenWindow() async {
+    try {
+      final options = await _getAuthOptions();
+      final branchId = int.tryParse(_targetBranchController.text.trim()) ?? 1;
+      
+      final response = await _dio.post(
+        '/api/windows', 
+        data: {'branch_id': branchId, 'number': '${totalTickets + 1}'}, 
+        options: options
+      );
+      if (response.statusCode == 200) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('В ОПС №$branchId успешно добавлено Окно №${response.data['number']}!'), backgroundColor: Colors.green),
+        );
+        _loadAdminData();
+      }
+    } catch (e) {
+      print('Ошибка открытия окна: $e');
+    }
   }
 
+  Future<void> _handleCloseWindow() async {
+    try {
+      final options = await _getAuthOptions();
+      final windowNum = _targetWindowController.text.trim();
+      
+      final response = await _dio.post('/api/windows/$windowNum/close', options: options);
+      if (response.statusCode == 200) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Окно №$windowNum принудительно закрыто! Активный талон сброшен в очередь.'), backgroundColor: Colors.orange),
+        );
+        _loadAdminData();
+      }
+    } catch (e) {
+      print('Ошибка принудительного закрытия окна: $e');
+    }
+  }
+
+  Future<void> _handleCreateBranch() async {
+    try {
+      final options = await _getAuthOptions();
+      final branchId = _targetBranchController.text.trim();
+      final response = await _dio.post(
+        '/api/branches', 
+        data: {'name': 'Новый филиал Почты (ОПС №$branchId)'}, 
+        options: options
+      );
+      if (response.statusCode == 200) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('В систему занесено отделение: ${response.data['name']}'), backgroundColor: Colors.green),
+        );
+        _loadAdminData();
+      }
+    } catch (e) {
+      print('Ошибка создания отделения: $e');
+    }
+  }
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Colors.grey[100],
+      backgroundColor: const Color(0xFFF5F7FA),
       appBar: AppBar(
-        title: const Text('Панель руководителя отделения'),
-        backgroundColor: Colors.indigo,
+        title: const Text('Панель руководителя отделения — Живая аналитика СУБД'),
+        backgroundColor: const Color(0xFF0055A5),
         foregroundColor: Colors.white,
         actions: [
-          IconButton(
-            tooltip: 'Обновить',
-            onPressed: _loading ? null : _loadAdminData,
-            icon: const Icon(Icons.refresh),
-          ),
+          IconButton(icon: const Icon(Icons.refresh), onPressed: _loading ? null : _loadAdminData),
+          IconButton(icon: const Icon(Icons.logout), onPressed: () => context.go('/login'))
         ],
       ),
       body: RefreshIndicator(
         onRefresh: _loadAdminData,
         child: SingleChildScrollView(
-          physics: const AlwaysScrollableScrollPhysics(),
           padding: const EdgeInsets.all(24),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              if (_loading)
-                const Padding(
-                  padding: EdgeInsets.only(bottom: 16),
-                  child: LinearProgressIndicator(),
-                ),
-
-              if (_error != null)
-                Card(
-                  color: Colors.red[50],
-                  child: Padding(
-                    padding: const EdgeInsets.all(16),
-                    child: Row(
-                      children: [
-                        const Icon(
-                          Icons.error_outline,
-                          color: Colors.red,
-                        ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: Text(
-                            _error!,
-                            style: const TextStyle(color: Colors.red),
+              if (_loading) const LinearProgressIndicator(color: Color(0xFF0055A5)),
+              const SizedBox(height: 16),
+              
+              // Адаптивный ряд карточек статистики
+              Wrap(
+                spacing: 16,
+                runSpacing: 16,
+                children: [
+                  _buildStatCard('Всего талонов в базе', '$totalTickets', const Color(0xFF0055A5), Icons.assessment),
+                  _buildStatCard('Ожидают вызова', '$waitingTickets', Colors.orange, Icons.people),
+                  _buildStatCard('У операторов окон', '$calledTickets', Colors.green, Icons.play_arrow),
+                  _buildStatCard('Обслуживание завершено', '$completedTickets', Colors.purple, Icons.check_circle),
+                ],
+              ),
+              const SizedBox(height: 32),
+              
+              const Text('Пульт административного управления ОПС', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Color(0xFF0055A5))),
+              const SizedBox(height: 16),
+              Card(
+                color: Colors.white,
+                child: Padding(
+                  padding: const EdgeInsets.all(24),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Expanded(
+                            child: TextField(
+                              controller: _targetBranchController,
+                              keyboardType: TextInputType.number,
+                              decoration: const InputDecoration(labelText: 'Целевой ID филиала (ОПС)', border: OutlineInputBorder(), prefixIcon: Icon(Icons.map)),
+                            ),
                           ),
-                        ),
-                        TextButton(
-                          onPressed: _loadAdminData,
-                          child: const Text('Повторить'),
-                        ),
-                      ],
-                    ),
+                          const SizedBox(width: 16),
+                          Expanded(
+                            child: TextField(
+                              controller: _targetWindowController,
+                              keyboardType: TextInputType.number,
+                              decoration: const InputDecoration(labelText: 'Целевой номер Окна оператора', border: OutlineInputBorder(), prefixIcon: Icon(Icons.desktop_windows)),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 24),
+                      Wrap(
+                        spacing: 16,
+                        runSpacing: 16,
+                        children: [
+                          ElevatedButton.icon(
+                            onPressed: _handleOpenWindow,
+                            icon: const Icon(Icons.add_box),
+                            style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF0055A5), foregroundColor: Colors.white, padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16)),
+                            label: const Text('Открыть новое Окно оператора', style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold)),
+                          ),
+                          ElevatedButton.icon(
+                            onPressed: _handleCloseWindow,
+                            icon: const Icon(Icons.disabled_by_default),
+                            style: ElevatedButton.styleFrom(backgroundColor: Colors.red, foregroundColor: Colors.white, padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16)),
+                            label: const Text('Принудительно закрыть Окно', style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold)),
+                          ),
+                          ElevatedButton.icon(
+                            onPressed: _handleCreateBranch,
+                            icon: const Icon(Icons.domain_add),
+                            style: ElevatedButton.styleFrom(backgroundColor: Colors.green, foregroundColor: Colors.white, padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16)),
+                            label: const Text('Зарегистрировать ОПС', style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold)),
+                          ),
+                        ],
+                      ),
+                    ],
                   ),
                 ),
-
-              // ---------------------------------------------------------------
-              // СТАТИСТИКА
-              // ---------------------------------------------------------------
-
-              Row(
-                children: [
-                  _buildStatCard(
-                    'В очереди',
-                    '—',
-                    Colors.blue,
-                    Icons.people,
-                  ),
-                  const SizedBox(width: 16),
-                  _buildStatCard(
-                    'Среднее ожидание',
-                    '—',
-                    Colors.green,
-                    Icons.timer,
-                  ),
-                  const SizedBox(width: 16),
-                  _buildStatCard(
-                    'Активные окна',
-                    '—',
-                    Colors.orange,
-                    Icons.store,
-                  ),
-                ],
               ),
-
-              const SizedBox(height: 24),
-
-              // ---------------------------------------------------------------
-              // ОСНОВНАЯ ЧАСТЬ
-              // ---------------------------------------------------------------
-
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Expanded(
-                    flex: 2,
-                    child: _buildWindowsCard(),
-                  ),
-                  const SizedBox(width: 24),
-                  Expanded(
-                    flex: 1,
-                    child: _buildAnomaliesCard(),
-                  ),
-                ],
-              ),
-
-              const SizedBox(height: 24),
-
-              // ---------------------------------------------------------------
-              // НАСТРОЙКИ ПРИОРИТЕТА
-              // ---------------------------------------------------------------
-
-              _buildPriorityConfigCard(),
+              const SizedBox(height: 32),
+              
+              _buildLogsCard(),
             ],
           ),
         ),
@@ -218,44 +242,26 @@ class _AdminDashboardState extends State<AdminDashboard> {
     );
   }
 
-  Widget _buildStatCard(
-    String title,
-    String value,
-    Color color,
-    IconData icon,
-  ) {
-    return Expanded(
+  Widget _buildStatCard(String title, String value, Color color, IconData icon) {
+    return Container(
+      width: 260,
       child: Card(
+        color: Colors.white,
         child: Padding(
           padding: const EdgeInsets.all(20),
           child: Row(
             children: [
-              Icon(
-                icon,
-                size: 40,
-                color: color,
-              ),
-              const SizedBox(width: 16),
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    title,
-                    style: const TextStyle(
-                      color: Colors.grey,
-                      fontSize: 14,
-                    ),
+              Icon(icon, size: 36, color: color),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(title, style: const TextStyle(color: Colors.grey, fontSize: 13), maxLines: 1, overflow: TextOverflow.ellipsis),
+                    Text(value, style: TextStyle(fontSize: 26, fontWeight: FontWeight.bold, color: color)),
+                  ],
+                ),
                   ),
-                  Text(
-                    value,
-                    style: TextStyle(
-                      fontSize: 28,
-                      fontWeight: FontWeight.bold,
-                      color: color,
-                    ),
-                  ),
-                ],
-              ),
             ],
           ),
         ),
@@ -263,242 +269,65 @@ class _AdminDashboardState extends State<AdminDashboard> {
     );
   }
 
-  Widget _buildWindowsCard() {
+  Widget _buildLogsCard() {
     return Card(
+      color: Colors.white,
       child: Padding(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.all(24),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             const Row(
               children: [
-                Icon(
-                  Icons.store,
-                  color: Colors.indigo,
-                ),
-                SizedBox(width: 8),
-                Text(
-                  'Статус окон',
-                  style: TextStyle(
-                    fontSize: 18,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
+                Icon(Icons.history, color: Color(0xFF0055A5)),
+                SizedBox(width: 12),
+                Text('Журнал действий системы (Реальное время)', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Color(0xFF0055A5))),
               ],
             ),
-
             const SizedBox(height: 16),
+            _logs.isEmpty
+                ? const Padding(
+                    padding: EdgeInsets.symmetric(vertical: 20),
+                    child: Text('Событий в журнале пока нет', style: TextStyle(color: Colors.grey)),
+                  )
+                : ListView.builder(
+                    shrinkWrap: true,
+                    physics: const NeverScrollableScrollPhysics(),
+                    itemCount: _logs.length,
+                    itemBuilder: (context, index) {
+                      final log = _logs[index];
+                      
+                      String operationName = log['event_type'] ?? '';
+                      if (operationName == 'created') operationName = 'Зарегистрирован новый талон в СУБД';
+                      if (operationName == 'call') operationName = 'Вызван к окну оператора';
+                      if (operationName == 'complete') operationName = 'Обслуживание успешно завершено';
+                      if (operationName == 'cancel') operationName = 'Талон отменён посетителем';
+                      if (operationName == 'return_to_queue') operationName = 'Возвращён оператором обратно в очередь';
 
-            _buildEmptyState(
-              icon: Icons.storefront_outlined,
-              title: 'Данные об окнах пока не загружены',
-              subtitle:
-                  'После подключения admin API здесь появятся '
-                  'статусы окон и текущие талоны.',
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildAnomaliesCard() {
-    return Card(
-      color: Colors.red[50],
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Row(
-              children: [
-                Icon(
-                  Icons.warning,
-                  color: Colors.red,
-                ),
-                SizedBox(width: 8),
-                Text(
-                  'Аномалии',
-                  style: TextStyle(
-                    fontSize: 18,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.red,
+                      return Container(
+                        margin: const EdgeInsets.symmetric(vertical: 4),
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFF5F7FA),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Row(
+                          children: [
+                            const Icon(Icons.info_outline, size: 16, color: Colors.blue),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: Text(
+                                'Идентификатор талона ID-${log['ticket_id']}: $operationName',
+                                style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w500),
+                              ),
+                            ),
+                          ],
+                        ),
+                      );
+                    },
                   ),
-                ),
-              ],
-            ),
-
-            const SizedBox(height: 16),
-
-            _buildEmptyState(
-              icon: Icons.check_circle_outline,
-              title: 'Нет данных',
-              subtitle:
-                  'После подключения API здесь появятся '
-                  'отклонения и незавершённые талоны.',
-            ),
           ],
         ),
-      ),
-    );
-  }
-
-  Widget _buildEmptyState({
-    required IconData icon,
-    required String title,
-    required String subtitle,
-  }) {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: Column(
-        children: [
-          Icon(
-            icon,
-            size: 40,
-            color: Colors.grey,
-          ),
-          const SizedBox(height: 10),
-          Text(
-            title,
-            textAlign: TextAlign.center,
-            style: const TextStyle(
-              fontWeight: FontWeight.bold,
-            ),
-          ),
-          const SizedBox(height: 6),
-          Text(
-            subtitle,
-            textAlign: TextAlign.center,
-            style: const TextStyle(
-              color: Colors.grey,
-              fontSize: 13,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildPriorityConfigCard() {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Row(
-              children: [
-                Icon(
-                  Icons.tune,
-                  color: Colors.indigo,
-                ),
-                SizedBox(width: 10),
-                Text(
-                  'Настройки приоритета очереди',
-                  style: TextStyle(
-                    fontSize: 20,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              ],
-            ),
-
-            const SizedBox(height: 6),
-
-            Text(
-              'Значения будут загружаться и сохраняться через backend.',
-              style: TextStyle(
-                color: Colors.grey[600],
-                fontSize: 13,
-              ),
-            ),
-
-            const SizedBox(height: 20),
-
-            Wrap(
-              spacing: 24,
-              runSpacing: 16,
-              children: [
-                _buildPriorityField(
-                  'Предзапись — время наступило',
-                  bookingDueController,
-                ),
-                _buildPriorityField(
-                  'Предзапись — заранее',
-                  bookingEarlyController,
-                ),
-                _buildPriorityField(
-                  'QR-код',
-                  qrController,
-                ),
-                _buildPriorityField(
-                  'Живая очередь',
-                  liveQueueController,
-                ),
-                _buildPriorityField(
-                  'Бонус за минуту ожидания',
-                  waitBonusController,
-                ),
-                _buildPriorityField(
-                  'Максимальное ожидание живой очереди',
-                  maxWaitController,
-                ),
-              ],
-            ),
-
-            const SizedBox(height: 20),
-
-            Align(
-              alignment: Alignment.centerRight,
-              child: ElevatedButton.icon(
-                onPressed: _savePriorityConfig,
-                icon: const Icon(Icons.save),
-                label: const Text('Сохранить настройки'),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-Widget _buildPriorityField(
-    String label,
-    TextEditingController controller,
-  ) {
-    return Container(
-      constraints: const BoxConstraints(maxWidth: 350), // Заменили SizedBox(width: 300)[cite: 11]
-      child: Row(
-        children: [
-          Expanded(
-            child: Text(
-              label,
-              style: const TextStyle(
-                fontSize: 14,
-              ),
-            ),
-          ),
-          const SizedBox(width: 12),
-          SizedBox(
-            width: 70,
-            child: TextField(
-              controller: controller,
-              keyboardType: const TextInputType.numberWithOptions(
-                decimal: true,
-              ),
-              textAlign: TextAlign.center,
-              decoration: const InputDecoration(
-                isDense: true,
-                border: OutlineInputBorder(),
-              ),
-            ),
-          ),
-        ],
       ),
     );
   }

@@ -1,39 +1,41 @@
-
 services:
-  # Наш бэкенд на FastAPI
-  api:
-    build: ./backend
-    container_name: esuo_api
-    ports:
-      - "8000:8000"
-    environment:
-      - DATABASE_URL=postgresql://user:password@db:5432/esuo_db
-      - REDIS_URL=redis://cache:6379/0
-    depends_on:
-      - db
-      - cache
-    volumes:
-      - ./backend:/app # Чтобы код обновлялся без перезапуска контейнера
-
-  # База данных PostgreSQL
-  db:
+  postgres:
     image: postgres:15-alpine
-    container_name: esuo_db
+    container_name: queue_postgres
     environment:
-      - POSTGRES_USER=user
-      - POSTGRES_PASSWORD=password
-      - POSTGRES_DB=esuo_db
+      POSTGRES_USER: queue
+      POSTGRES_PASSWORD: queue
+      POSTGRES_DB: queue
     ports:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U queue -d queue"]
+      interval: 2s
+      timeout: 3s
+      retries: 5
 
-  # Redis для очередей и защиты от двойного вызова
-  cache:
+  redis:
     image: redis:alpine
-    container_name: esuo_redis
+    container_name: queue_redis
     ports:
       - "6379:6379"
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: queue_api
+    ports:
+      - "8000:8000"
+    environment:
+      - DATABASE_URL=postgresql+psycopg2://queue:queue@postgres:5432/queue
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
 
 volumes:
   postgres_data:

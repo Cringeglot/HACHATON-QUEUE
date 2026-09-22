@@ -33,7 +33,7 @@ STARVATION_MINUTES = 45
 STARVATION_BOOST = 200
 ACTIVATION_MINUTES = 10
 LATE_DOWNGRADE_MINUTES = 15
-
+AVG_SERVICE_MINUTES = 5
 
 # ---------------------------------------------------------------------------
 # Утилиты
@@ -76,7 +76,8 @@ def is_ready(t: Ticket, now: datetime) -> bool:
     """Созрел ли талон для вызова."""
     if t.status not in ("waiting", "scheduled"):
         return False
-    if t.source != "appointment" or not t.scheduled_at:
+    # Если талон уже активирован (waiting) или это не предзапись — он готов к вызову
+    if t.status == "waiting" or t.source != "appointment" or not t.scheduled_at:
         return True
     sched = _aware(t.scheduled_at)
     return now >= sched - timedelta(minutes=ACTIVATION_MINUTES)
@@ -232,3 +233,65 @@ def close_window(db: Session, window_id: int):
 
     db.flush()
     return returned
+
+def activate(db: Session, ticket_id: int):
+    """Активировать талон предзаписи (клиент пришел и подтвердил присутствие)."""
+    t = db.get(Ticket, ticket_id)
+    if t is None:
+        raise ValueError("Талон не найден")
+    if t.status != "scheduled":
+        raise ValueError(f"Нельзя активировать талон в статусе {t.status}")
+
+    t.status = "waiting"
+    log_event(db, t.id, "activate", "Талон активирован клиентом в терминале/QR")
+    db.flush()
+    return t
+
+    
+
+# ---------------------------------------------------------------------------
+# Оценка времени ожидания
+# ---------------------------------------------------------------------------
+
+def estimate_wait_minutes(db: Session, ticket: Ticket) -> int:
+    """
+    Оценка времени ожидания в минутах для конкретного талона.
+
+    Считает количество талонов, которые обгонят этот:
+    - то же отделение, та же услуга;
+    - статус waiting или scheduled;
+    - обгоняют, если их эффективный вес выше нашего,
+      либо равен, но их id меньше (FIFO).
+
+    Умножает на AVG_SERVICE_MINUTES.
+    """
+    if ticket.status not in ("waiting", "scheduled"):
+        return 0
+
+    now = now_utc()
+    my_weight = priority_of(ticket, now)
+
+    stmt = (
+        select(Ticket)
+        .where(
+            Ticket.branch_id == ticket.branch_id,
+            Ticket.service_id == ticket.service_id,
+            Ticket.status.in_(["waiting", "scheduled"]),
+            Ticket.id != ticket.id,
+        )
+    )
+    candidates = db.scalars(stmt).all()
+
+    ahead = 0
+    for other in candidates:
+        if not is_ready(other, now):
+            continue
+
+        other_weight = priority_of(other, now)
+
+        if other_weight > my_weight:
+            ahead += 1
+        elif other_weight == my_weight and other.id < ticket.id:
+            ahead += 1
+
+    return ahead * AVG_SERVICE_MINUTES

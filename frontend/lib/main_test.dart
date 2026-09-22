@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
+import 'core/session_storage.dart';
 import 'screens/client/ticket_screen.dart';
 import 'screens/client/service_selection_screen.dart';
 import 'screens/client/booking_screen.dart';
@@ -11,18 +12,23 @@ import 'screens/admin/admin_dashboard.dart';
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
+  
   final String initialRoute = '/login';
 
   final GoRouter router = GoRouter(
     initialLocation: initialRoute,
     routes: [
       GoRoute(
-        path: '/login',
-        builder: (context, state) => const LoginScreen(),
+        path: '/',
+        redirect: (context, state) => '/login',
       ),
       GoRoute(
         path: '/client-services',
         builder: (context, state) => const ServiceSelectionScreen(),
+      ),
+      GoRoute(
+        path: '/login',
+        builder: (context, state) => const LoginScreen(),
       ),
       GoRoute(
         path: '/operator-dashboard/:windowId',
@@ -41,8 +47,8 @@ void main() async {
         builder: (context, state) {
           final extra = state.extra as Map<String, dynamic>?;
           final serviceName = extra?['serviceName']?.toString() ?? 'Неизвестная услуга';
-          final serviceId = extra?['serviceId']?.toString() ?? '1';
-          final branchId = extra?['branchId']?.toString() ?? '1';
+          final serviceId = extra?['serviceId']?.toString() ?? 's1';
+          final branchId = extra?['branchId']?.toString() ?? '101000';
 
           return BookingScreen(
             serviceName: serviceName,

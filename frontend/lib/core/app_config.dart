@@ -4,7 +4,7 @@ class AppConfig {
   static const String _envApiUrl = String.fromEnvironment('API_URL');
   static const String _envWsUrl = String.fromEnvironment('WS_URL');
 
-  /// Динамическое получение HTTP Base URL
+
   static String get httpBaseUrl {
     if (_envApiUrl.isNotEmpty) return _envApiUrl;
 
@@ -17,11 +17,10 @@ class AppConfig {
       }
     }
     
-    // По умолчанию для локальной разработки
+
     return 'http://localhost:8000';
   }
 
-  /// Динамическое получение WS Base URL
   static String get wsBaseUrl {
     if (_envWsUrl.isNotEmpty) return _envWsUrl;
 

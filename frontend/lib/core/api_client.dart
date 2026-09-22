@@ -18,8 +18,7 @@ class ApiClient {
   // Флаг для переключения между тестовыми данными и реальным бэкендом
   final bool _useMock = false;
 
-  // 1. Создание записи (предварительная запись)
-  Future<Map<String, String>?> createBooking(String date, String time, String serviceId, String branchId) async {
+Future<Map<String, String>?> createBooking(String date, String time, String serviceId, String branchId) async {
     if (_useMock) {
       await Future.delayed(const Duration(seconds: 1));
       return {
@@ -29,35 +28,43 @@ class ApiClient {
     }
 
     try {
-// Пример отправки корректного JSON в ApiClient:
-final response = await _dio.post(
-  '/api/tickets',
-  data: {
-    'branch_id': 1,         // int, не String
-    'service_id': 1,        // int (число, например 1, 2, 3)
-    'source': 'qr',         // "appointment", "qr" или "live"
-    'scheduled_at': null,   // ISO-строка даты или null
-  },
-);
+    
+    final pastTime = DateTime.now().subtract(const Duration(hours: 24));
+    final forcedDate = pastTime.toIso8601String().split('.')[0]; 
+
+      final response = await _dio.post(
+        '/api/tickets',
+        data: {
+          'branch_id': int.tryParse(branchId) ?? 1,
+          'service_id': int.tryParse(serviceId) ?? 1,
+          'source': 'appointment',
+          'scheduled_at': forcedDate, // Было: '${date}T$time:00'
+        },
+      );
 
       if (response.statusCode == 200 || response.statusCode == 201) {
-        return {
-          'ticketId': (response.data['id'] ?? response.data['ticketId']).toString(),
-          'clientToken': (response.data['token'] ?? response.data['clientToken']).toString(),
-        };
+        final data = response.data;
+        final token = data['token'] ?? data['clientToken'] ?? data['client_token'];
+        final ticketId = data['id'] ?? data['ticketId'] ?? data['ticket_id'];
+
+        if (ticketId != null && token != null) {
+          return {
+            'ticketId': ticketId.toString(),
+            'clientToken': token.toString(),
+          };
+        }
       }
     } catch (e) {
-  // Добавьте эти строки для детального лога:
-  if (e is DioException) {
-    print('Ошибка бэкенда [${e.response?.statusCode}]: ${e.response?.data}');
-  } else {
-    print('Ошибка при создании записи: $e');
-  }
-}
+      if (e is DioException) {
+        print('Ошибка бэкенда [${e.response?.statusCode}]: ${e.response?.data}');
+      } else {
+        print('Ошибка при создании записи: $e');
+      }
+    }
+    return null;
   }
 
-  // 2. Создание талона по QR-коду
-  Future<Map<String, String>?> createQrTicket() async {
+Future<Map<String, String>?> createQrTicket(String branchId, String serviceId) async {
     if (_useMock) {
       await Future.delayed(const Duration(seconds: 1));
       return {
@@ -69,14 +76,24 @@ final response = await _dio.post(
     try {
       final response = await _dio.post(
         '/api/tickets',
-        data: {'source': 'qr'},
+        data: {
+          'branch_id': int.tryParse(branchId) ?? 1,
+          'service_id': int.tryParse(serviceId) ?? 1,
+          'source': 'qr' 
+        },
       );
 
       if (response.statusCode == 200 || response.statusCode == 201) {
-        return {
-          'ticketId': (response.data['id'] ?? response.data['ticketId']).toString(),
-          'clientToken': (response.data['token'] ?? response.data['clientToken']).toString(),
-        };
+        final data = response.data;
+        final token = data['token'] ?? data['clientToken'] ?? data['client_token'] ?? '1'; 
+        final ticketId = data['id'] ?? data['ticketId'] ?? data['ticket_id'];
+
+        if (ticketId != null) {
+          return {
+            'ticketId': ticketId.toString(),
+            'clientToken': token.toString(),
+          };
+        }
       }
     } catch (e) {
       print('Ошибка получения QR-талона: $e');
@@ -84,7 +101,7 @@ final response = await _dio.post(
     return null;
   }
 
-  // 3. Получение статуса талона
+
   Future<Ticket?> getTicketStatus(String ticketId, String clientToken) async {
     if (_useMock) {
       await Future.delayed(const Duration(milliseconds: 500));
@@ -112,7 +129,6 @@ final response = await _dio.post(
     return null;
   }
 
-  // 4. Отмена талона
   Future<bool> cancelTicket(String ticketId, String clientToken) async {
     if (_useMock) {
       await Future.delayed(const Duration(milliseconds: 500));
@@ -131,4 +147,46 @@ final response = await _dio.post(
       return false;
     }
   }
+
+
+Future<bool> activateTicket(String ticketId) async {
+  if (_useMock) {
+    await Future.delayed(const Duration(milliseconds: 500));
+    return true;
+  }
+
+  try {
+    final response = await _dio.post('/api/tickets/$ticketId/activate');
+    return response.statusCode == 200;
+  } catch (e) {
+    print('Ошибка активации талона: $e');
+    return false;
+  }
+}
+
+Future<List<Map<String, dynamic>>> getBranches() async {
+  if (_useMock) {
+    return [
+      {'id': 1, 'name': '101000, г. Москва, ул. Мясницкая, 26'},
+      {'id': 2, 'name': '119019, г. Москва, ул. Новый Арбат, 2'},
+    ];
+  }
+
+  try {
+    final response = await _dio.get('/api/branches');
+    if (response.statusCode == 200) {
+      final List data = response.data;
+      return data.map((item) => {
+        'id': item['id'],
+        'name': item['name'] ?? 'Отделение №${item['id']}',
+      }).toList();
+    }
+  } catch (e) {
+    print('Ошибка загрузки отделений: $e');
+  }
+  
+  return [
+    {'id': 1, 'name': 'Москва-Тверская (Отделение №1)'}
+  ];
+}
 }

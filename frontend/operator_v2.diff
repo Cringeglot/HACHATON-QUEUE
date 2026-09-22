@@ -1,0 +1,353 @@
+--- a/operator_dashboard.dart	2026-09-18 11:32:51.518468576 +0000
++++ b/operator_dashboard.dart	2026-09-18 11:25:49.368924319 +0000
+@@ -1,6 +1,13 @@
+ import 'package:flutter/material.dart';
+ import '../../models/ticket.dart';
+ 
++/// Рабочее место оператора одного окна.
++///
++/// Значения sourceType/status — как в ticket.dart / ticket_screen.dart:
++/// source ∈ {BOOKING, QR, WALK_IN}, status ∈ {WAITING, IN_SERVICE, COMPLETED, CANCELLED}.
++/// "Вернуть в очередь" технически переводит талон обратно в WAITING —
++/// отдельного статуса для этого не заводим, чтобы не плодить рассинхрон с бэкендом.
++/// Везде, где стоит TODO — вызов реального API, пока замокано.
+ class OperatorDashboard extends StatefulWidget {
+   const OperatorDashboard({super.key});
+ 
+@@ -12,6 +19,18 @@
+   bool isWindowOpen = true;
+   final int windowNumber = 3;
+ 
++  // Полный список услуг отделения.
++  // TODO: заменить на GET /api/offices/{officeId}/services
++  final List<String> allServices = const [
++    'Паспорт РФ',
++    'Справки',
++    'Посылки',
++    'Финансовые услуги',
++  ];
++
++  // Услуги, которые прямо сейчас обслуживает это окно.
++  Set<String> windowServices = {'Паспорт РФ', 'Справки', 'Посылки'};
++
+   Ticket? currentTicket = Ticket(
+     id: '1',
+     number: 'A-042',
+@@ -28,12 +47,246 @@
+     setState(() {
+       currentTicket = currentTicket?.copyWith(status: 'IN_SERVICE', windowNumber: windowNumber);
+     });
++    // TODO: POST /api/windows/{windowNumber}/call
+   }
+ 
+   void _complete() {
+-    setState(() {
+-      currentTicket = null;
+-    });
++    setState(() => currentTicket = null);
++    // TODO: POST /api/tickets/{id}/complete
++  }
++
++  void _returnToQueue() {
++    if (currentTicket == null) return;
++    final ticketNumber = currentTicket!.number;
++    setState(() => currentTicket = null); // возвращается в общий пул ожидания
++    ScaffoldMessenger.of(context).showSnackBar(
++      SnackBar(content: Text('Талон $ticketNumber возвращён в очередь')),
++    );
++    // TODO: POST /api/tickets/{id}/return
++    // Бэкенд должен сохранить исходный createdAt, чтобы клиент не терял
++    // накопленное время ожидания и не уходил в конец очереди.
++  }
++
++  Future<void> _redirect() async {
++    if (currentTicket == null) return;
++
++    final result = await showDialog<Map<String, String>>(
++      context: context,
++      builder: (context) {
++        String targetType = 'window';
++        int targetWindow = windowNumber == 1 ? 2 : 1;
++        String targetService = allServices.first;
++
++        return StatefulBuilder(
++          builder: (context, setDialogState) => AlertDialog(
++            title: const Text('Перенаправить клиента'),
++            content: Column(
++              mainAxisSize: MainAxisSize.min,
++              crossAxisAlignment: CrossAxisAlignment.start,
++              children: [
++                RadioListTile<String>(
++                  title: const Text('В другое окно'),
++                  value: 'window',
++                  groupValue: targetType,
++                  onChanged: (v) => setDialogState(() => targetType = v!),
++                ),
++                if (targetType == 'window')
++                  Padding(
++                    padding: const EdgeInsets.only(left: 32, bottom: 8),
++                    child: DropdownButton<int>(
++                      value: targetWindow,
++                      items: [1, 2, 3, 4, 5]
++                          .where((n) => n != windowNumber)
++                          .map((n) => DropdownMenuItem(value: n, child: Text('Окно № $n')))
++                          .toList(),
++                      onChanged: (v) => setDialogState(() => targetWindow = v!),
++                    ),
++                  ),
++                RadioListTile<String>(
++                  title: const Text('На другую услугу'),
++                  value: 'service',
++                  groupValue: targetType,
++                  onChanged: (v) => setDialogState(() => targetType = v!),
++                ),
++                if (targetType == 'service')
++                  Padding(
++                    padding: const EdgeInsets.only(left: 32),
++                    child: DropdownButton<String>(
++                      value: targetService,
++                      items: allServices
++                          .map((s) => DropdownMenuItem(value: s, child: Text(s)))
++                          .toList(),
++                      onChanged: (v) => setDialogState(() => targetService = v!),
++                    ),
++                  ),
++              ],
++            ),
++            actions: [
++              TextButton(onPressed: () => Navigator.pop(context), child: const Text('Отмена')),
++              ElevatedButton(
++                onPressed: () => Navigator.pop(context, {
++                  'type': targetType,
++                  'value': targetType == 'window' ? '$targetWindow' : targetService,
++                }),
++                child: const Text('Перенаправить'),
++              ),
++            ],
++          ),
++        );
++      },
++    );
++
++    if (result == null) return;
++    final ticketNumber = currentTicket!.number;
++    setState(() => currentTicket = null);
++    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
++      content: Text(
++        result['type'] == 'window'
++            ? 'Талон $ticketNumber перенаправлен в окно № ${result['value']}'
++            : 'Талон $ticketNumber перенаправлен на услугу «${result['value']}»',
++      ),
++    ));
++    // TODO: POST /api/tickets/{id}/redirect  body: { targetWindow | targetService }
++  }
++
++  Future<void> _addWalkIn() async {
++    final service = await showDialog<String>(
++      context: context,
++      builder: (context) => SimpleDialog(
++        title: const Text('Добавить клиента из живой очереди'),
++        children: allServices
++            .map((s) => SimpleDialogOption(
++                  onPressed: () => Navigator.pop(context, s),
++                  child: Text(s),
++                ))
++            .toList(),
++      ),
++    );
++    if (service == null || !mounted) return;
++
++    ScaffoldMessenger.of(context).showSnackBar(
++      SnackBar(content: Text('Клиент добавлен в живую очередь (услуга: $service)')),
++    );
++    // TODO: POST /api/tickets  body: { source: 'WALK_IN', serviceId, officeId }
++    // Талон встаёт в общую очередь отделения, а не сразу к этому окну.
++  }
++
++  Future<void> _reportIssue() async {
++    String issueType = 'technical';
++    final controller = TextEditingController();
++
++    final submitted = await showDialog<bool>(
++      context: context,
++      builder: (context) => StatefulBuilder(
++        builder: (context, setDialogState) => AlertDialog(
++          title: const Text('Сообщить о проблеме'),
++          content: Column(
++            mainAxisSize: MainAxisSize.min,
++            crossAxisAlignment: CrossAxisAlignment.start,
++            children: [
++              DropdownButton<String>(
++                value: issueType,
++                items: const [
++                  DropdownMenuItem(value: 'technical', child: Text('Техническая')),
++                  DropdownMenuItem(value: 'operational', child: Text('Операционная')),
++                ],
++                onChanged: (v) => setDialogState(() => issueType = v!),
++              ),
++              const SizedBox(height: 8),
++              TextField(
++                controller: controller,
++                maxLines: 3,
++                decoration: const InputDecoration(
++                  hintText: 'Опишите проблему',
++                  border: OutlineInputBorder(),
++                ),
++              ),
++            ],
++          ),
++          actions: [
++            TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Отмена')),
++            ElevatedButton(onPressed: () => Navigator.pop(context, true), child: const Text('Отправить')),
++          ],
++        ),
++      ),
++    );
++
++    if (submitted == true && mounted) {
++      ScaffoldMessenger.of(context).showSnackBar(
++        const SnackBar(content: Text('Проблема зафиксирована')),
++      );
++      // TODO: POST /api/incidents  body: { windowNumber, type: issueType, description }
++    }
++  }
++
++  Future<void> _editServices() async {
++    final result = await showDialog<Set<String>>(
++      context: context,
++      builder: (context) {
++        final selection = {...windowServices};
++        return StatefulBuilder(
++          builder: (context, setDialogState) => AlertDialog(
++            title: const Text('Обслуживаемые услуги'),
++            content: SizedBox(
++              width: 300,
++              child: Column(
++                mainAxisSize: MainAxisSize.min,
++                children: allServices
++                    .map((s) => CheckboxListTile(
++                          title: Text(s),
++                          value: selection.contains(s),
++                          onChanged: (checked) => setDialogState(() {
++                            checked == true ? selection.add(s) : selection.remove(s);
++                          }),
++                        ))
++                    .toList(),
++              ),
++            ),
++            actions: [
++              TextButton(onPressed: () => Navigator.pop(context), child: const Text('Отмена')),
++              ElevatedButton(
++                onPressed: () => Navigator.pop(context, selection),
++                child: const Text('Сохранить'),
++              ),
++            ],
++          ),
++        );
++      },
++    );
++
++    if (result != null) {
++      setState(() => windowServices = result);
++      // TODO: PUT /api/windows/{windowNumber}/services
++    }
++  }
++
++  Future<void> _handleWindowToggle(bool open) async {
++    if (!open && currentTicket != null) {
++      final confirm = await showDialog<bool>(
++        context: context,
++        builder: (context) => AlertDialog(
++          title: const Text('Закрыть окно?'),
++          content: const Text(
++            'У окна есть активный клиент. При закрытии его талон будет '
++            'возвращён в очередь без потери накопленного времени ожидания.',
++          ),
++          actions: [
++            TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Отмена')),
++            ElevatedButton(onPressed: () => Navigator.pop(context, true), child: const Text('Закрыть окно')),
++          ],
++        ),
++      );
++      if (confirm != true) return;
++      setState(() {
++        currentTicket = null;
++        isWindowOpen = false;
++      });
++      // TODO: POST /api/windows/{windowNumber}/close
++      // (бэкенд сам переводит талон в status='returned' — см. close_window)
++      return;
++    }
++    setState(() => isWindowOpen = open);
++    // TODO: POST /api/windows/{windowNumber}/open|close
+   }
+ 
+   @override
+@@ -53,7 +306,7 @@
+                   children: [
+                     const Icon(Icons.store, size: 32, color: Colors.blue),
+                     const SizedBox(width: 12),
+-                    Text('Окно № $windowNumber', 
++                    Text('Окно № $windowNumber',
+                         style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold)),
+                   ],
+                 ),
+@@ -61,20 +314,39 @@
+                 const Text('Статус окна', style: TextStyle(color: Colors.grey, fontSize: 14)),
+                 const SizedBox(height: 8),
+                 SwitchListTile(
+-                  title: Text(isWindowOpen ? 'Открыто' : 'Закрыто', 
++                  title: Text(isWindowOpen ? 'Открыто' : 'Закрыто',
+                       style: TextStyle(fontWeight: FontWeight.bold, color: isWindowOpen ? Colors.green : Colors.red)),
+                   value: isWindowOpen,
+                   activeThumbColor: Colors.green,
+-                  onChanged: (val) => setState(() => isWindowOpen = val),
++                  onChanged: _handleWindowToggle,
+                 ),
+                 const Divider(height: 40),
+-                const Text('Обслуживаемые услуги:', style: TextStyle(color: Colors.grey, fontSize: 14)),
+-                const SizedBox(height: 12),
+-                _buildServiceChip('Паспорт РФ'),
+-                const SizedBox(height: 8),
+-                _buildServiceChip('Справки'),
++                Row(
++                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
++                  children: [
++                    const Text('Обслуживаемые услуги:', style: TextStyle(color: Colors.grey, fontSize: 14)),
++                    TextButton(onPressed: _editServices, child: const Text('Изменить')),
++                  ],
++                ),
++                const SizedBox(height: 4),
++                Wrap(
++                  spacing: 8,
++                  runSpacing: 8,
++                  children: windowServices.map(_buildServiceChip).toList(),
++                ),
++                const Spacer(),
++                OutlinedButton.icon(
++                  onPressed: _addWalkIn,
++                  icon: const Icon(Icons.person_add),
++                  label: const Text('Добавить из живой очереди'),
++                ),
+                 const SizedBox(height: 8),
+-                _buildServiceChip('Посылки'),
++                OutlinedButton.icon(
++                  onPressed: _reportIssue,
++                  icon: const Icon(Icons.report_problem_outlined, color: Colors.red),
++                  label: const Text('Сообщить о проблеме', style: TextStyle(color: Colors.red)),
++                  style: OutlinedButton.styleFrom(side: const BorderSide(color: Colors.red)),
++                ),
+               ],
+             ),
+           ),
+@@ -111,8 +383,8 @@
+                         children: [
+                           _buildActionButton(Icons.call, 'Вызвать', Colors.blue, _callNext),
+                           _buildActionButton(Icons.check_circle, 'Завершить', Colors.green, _complete),
+-                          _buildActionButton(Icons.undo, 'Вернуть в очередь', Colors.orange, () {}),
+-                          _buildActionButton(Icons.swap_horiz, 'Перенаправить', Colors.purple, () {}),
++                          _buildActionButton(Icons.undo, 'Вернуть в очередь', Colors.orange, _returnToQueue),
++                          _buildActionButton(Icons.swap_horiz, 'Перенаправить', Colors.purple, _redirect),
+                         ],
+                       ),
+                     ]

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
+import '../../core/api_client.dart';
 
 class ServiceSelectionScreen extends StatefulWidget {
   const ServiceSelectionScreen({super.key});
@@ -9,22 +10,35 @@ class ServiceSelectionScreen extends StatefulWidget {
 }
 
 class _ServiceSelectionScreenState extends State<ServiceSelectionScreen> {
-  String? _selectedBranchId;
+  int? _selectedBranchId;
+  List<Map<String, dynamic>> _branches = [];
+  bool _isLoadingBranches = true;
 
-  // Демонстрационный список отделений
-  final List<Map<String, String>> branches = const [
-    {'id': 'b1', 'name': '101000, г. Москва, ул. Мясницкая, 26'},
-    {'id': 'b2', 'name': '119019, г. Москва, ул. Новый Арбат, 2'},
-    {'id': 'b3', 'name': '125009, г. Москва, Тверская ул., 9'},
-  ];
-
-  // Демонстрационный список услуг
   final List<Map<String, String>> services = const [
-    {'id': 's1', 'name': 'Получить посылку или письмо', 'icon': 'inventory'},
-    {'id': 's2', 'name': 'Отправить посылку или письмо', 'icon': 'mark_email_read'},
-    {'id': 's3', 'name': 'Финансовые услуги (переводы, пенсии)', 'icon': 'account_balance_wallet'},
-    {'id': 's4', 'name': 'Прочие услуги', 'icon': 'more_horiz'},
+    {'id': '1', 'name': 'Получить посылку или письмо', 'icon': 'inventory'},
+    {'id': '2', 'name': 'Отправить посылку или письмо', 'icon': 'mark_email_read'},
+    {'id': '3', 'name': 'Финансовые услуги', 'icon': 'account_balance_wallet'},
+    {'id': '4', 'name': 'Прочие услуги', 'icon': 'more_horiz'},
   ];
+
+  @override
+  void initState() {
+    super.initState();
+    _loadBranches();
+  }
+
+  Future<void> _loadBranches() async {
+    final branches = await ApiClient().getBranches();
+    if (mounted) {
+      setState(() {
+        _branches = branches;
+        _isLoadingBranches = false;
+        if (_branches.isNotEmpty) {
+          _selectedBranchId = _branches.first['id'] as int;
+        }
+      });
+    }
+  }
 
   IconData _getIcon(String iconName) {
     switch (iconName) {
@@ -33,6 +47,73 @@ class _ServiceSelectionScreenState extends State<ServiceSelectionScreen> {
       case 'account_balance_wallet': return Icons.account_balance_wallet;
       default: return Icons.more_horiz;
     }
+  }
+
+  // Диалог выбора формата записи для конкретной услуги
+  void _showServiceActionSheet(Map<String, String> service) {
+    if (_selectedBranchId == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Пожалуйста, выберите отделение')),
+      );
+      return;
+    }
+
+    showModalBottomSheet(
+      context: context,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (context) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.all(20.0),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  service['name']!,
+                  style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(height: 16),
+                ListTile(
+                  leading: const Icon(Icons.calendar_month, color: Color(0xFF0055A5)),
+                  title: const Text('Записаться на время'),
+                  subtitle: const Text('Предварительная запись на выбранную дату'),
+                  onTap: () {
+                    Navigator.pop(context);
+                    context.push(
+                      '/booking',
+                      extra: {
+                        'serviceName': service['name']!,
+                        'serviceId': service['id']!,
+                        'branchId': _selectedBranchId.toString(),
+                      },
+                    );
+                  },
+                ),
+                const Divider(),
+                ListTile(
+                  leading: const Icon(Icons.qr_code_2, color: Color(0xFF0055A5)),
+                  title: const Text('Я в отделении (взять QR-талон)'),
+                  subtitle: const Text('Получить талон в живую очередь сейчас'),
+                  onTap: () {
+                    Navigator.pop(context);
+                    context.push(
+                      '/qr-entry',
+                      extra: {
+                        'branchId': _selectedBranchId.toString(),
+                        'serviceId': service['id']!, // Передается ID именно выбранной услуги!
+                      },
+                    );
+                  },
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
   }
 
   @override
@@ -53,28 +134,30 @@ class _ServiceSelectionScreenState extends State<ServiceSelectionScreen> {
               children: [
                 const Text('Выберите отделение:', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
                 const SizedBox(height: 12),
-                DropdownButtonFormField<String>(
-                  decoration: InputDecoration(
-                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
-                    contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                  ),
-                  hint: const Text('Нажмите для выбора отделения'),
-                  value: _selectedBranchId,
-                  isExpanded: true,
-                  items: branches.map((branch) {
-                    return DropdownMenuItem<String>(
-                      value: branch['id'],
-                      child: Text(branch['name']!),
-                    );
-                  }).toList(),
-                  onChanged: (value) {
-                    setState(() => _selectedBranchId = value);
-                  },
-                ),
+                _isLoadingBranches
+                    ? const Center(child: CircularProgressIndicator())
+                    : DropdownButtonFormField<int>(
+                        decoration: InputDecoration(
+                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                          contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                        ),
+                        hint: const Text('Выберите отделение'),
+                        value: _selectedBranchId,
+                        isExpanded: true,
+                        items: _branches.map((branch) {
+                          return DropdownMenuItem<int>(
+                            value: branch['id'] as int,
+                            child: Text(branch['name'].toString()),
+                          );
+                        }).toList(),
+                        onChanged: (value) {
+                          setState(() => _selectedBranchId = value);
+                        },
+                      ),
                 const SizedBox(height: 32),
                 
                 if (_selectedBranchId != null) ...[
-                  const Text('Выберите услугу для записи:', style: TextStyle(fontSize: 18)),
+                  const Text('Выберите услугу:', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
                   const SizedBox(height: 16),
                   ...services.map((service) => Card(
                     elevation: 2,
@@ -84,40 +167,10 @@ class _ServiceSelectionScreenState extends State<ServiceSelectionScreen> {
                       leading: Icon(_getIcon(service['icon']!), color: const Color(0xFF0055A5), size: 32),
                       title: Text(service['name']!, style: const TextStyle(fontWeight: FontWeight.w500)),
                       trailing: const Icon(Icons.arrow_forward_ios, size: 16),
-                      onTap: () {
-                          context.push(
-                          '/booking',
-                          extra: {
-                          'serviceName': service['name']!,
-                          'serviceId': service['id']!,
-                          'branchId': _selectedBranchId!,
-                              },
-                            );
-                         },
+                      onTap: () => _showServiceActionSheet(service),
                     ),
                   )),
-                ] else ...[
-                  const Center(
-                    child: Padding(
-                      padding: EdgeInsets.all(32.0),
-                      child: Text('Сначала выберите отделение, чтобы увидеть список услуг', 
-                                  textAlign: TextAlign.center, style: TextStyle(color: Colors.grey)),
-                    ),
-                  )
                 ],
-
-                const Divider(height: 48),
-                Center(
-                  child: TextButton.icon(
-                    onPressed: () => context.push('/qr-entry'),
-                    icon: const Icon(Icons.qr_code_scanner),
-                    label: const Text('Я уже в отделении (ввести код)'),
-                    style: TextButton.styleFrom(
-                      foregroundColor: const Color(0xFF0055A5),
-                      padding: const EdgeInsets.all(16),
-                    ),
-                  ),
-                ),
               ],
             ),
           ),

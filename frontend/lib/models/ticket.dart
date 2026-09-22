@@ -4,8 +4,8 @@ class Ticket {
   final String status;
   final int estimatedWaitMin;
   final String? windowNumber;
+  final String? branchId; 
   
-  // Новые поля для UI оператора
   final String? sourceType;
   final String? serviceId;
   final String? clientToken;
@@ -17,6 +17,7 @@ class Ticket {
     required this.status,
     required this.estimatedWaitMin,
     this.windowNumber,
+    this.branchId,
     this.sourceType,
     this.serviceId,
     this.clientToken,
@@ -32,7 +33,7 @@ class Ticket {
       windowNumber: json['windowNumber']?.toString() ?? 
                     json['window_number']?.toString() ?? 
                     json['window']?.toString(),
-      // Считывание новых полей с поддержкой snake_case
+      branchId: json['branchId']?.toString() ?? json['branch_id']?.toString(),
       sourceType: json['sourceType']?.toString() ?? json['source_type']?.toString(),
       serviceId: json['serviceId']?.toString() ?? json['service_id']?.toString(),
       clientToken: json['clientToken']?.toString() ?? json['client_token']?.toString(),
@@ -47,6 +48,7 @@ class Ticket {
       'status': status,
       'estimatedWaitMin': estimatedWaitMin,
       'windowNumber': windowNumber,
+      'branchId': branchId,
       'sourceType': sourceType,
       'serviceId': serviceId,
       'clientToken': clientToken,

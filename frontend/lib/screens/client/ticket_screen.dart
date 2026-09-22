@@ -104,6 +104,36 @@ class _TicketScreenState extends State<TicketScreen> {
     }
   }
 
+  bool _isActivating = false;
+
+Future<void> _handleActivate() async {
+  setState(() => _isActivating = true);
+
+  final success = await _apiClient.activateTicket(_activeTicketId);
+
+  if (!mounted) return;
+
+  if (success) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Приход подтвержден! Вы встали в очередь.'),
+        backgroundColor: Colors.green,
+      ),
+    );
+    // Обновляем статус талона, чтобы получить актуальный статус WAITING от бэкенда
+    await _fetchTicketStatus();
+  } else {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Ошибка активации талона'),
+        backgroundColor: Colors.red,
+      ),
+    );
+  }
+
+  setState(() => _isActivating = false);
+}
+
   void _handleWsDisconnect() {
     if (!mounted) return;
     _isWsConnected = false;
@@ -274,13 +304,16 @@ class _TicketScreenState extends State<TicketScreen> {
     }
   }
 
-  (String label, Color color) _getStatusDisplay(String status) {
+(String label, Color color) _getStatusDisplay(String status) {
     switch (status) {
       case 'IN_SERVICE':
       case 'CALLED':
         return ('Вызван к окну', Colors.green);
       case 'WAITING':
         return ('В очереди', Colors.orange);
+      case 'SCHEDULED':
+      case 'scheduled': 
+        return ('Запланировано', Colors.teal); 
       case 'COMPLETED':
         return ('Завершено', Colors.blue);
       case 'CANCELLED':
@@ -315,7 +348,7 @@ class _TicketScreenState extends State<TicketScreen> {
     );
   }
 
-  Widget _buildCardContent() {
+Widget _buildCardContent() {
     if (_isLoading) {
       return const Padding(
         padding: EdgeInsets.all(32.0),
@@ -362,7 +395,7 @@ class _TicketScreenState extends State<TicketScreen> {
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        const Text('Отделение № 101000', style: TextStyle(color: Colors.grey, fontSize: 14)),
+        Text('Отделение № ${_ticket!.branchId ?? "1"}', style: const TextStyle(color: Colors.grey, fontSize: 14)),
         const SizedBox(height: 16),
         Text(
           _ticket!.number,
@@ -390,19 +423,49 @@ class _TicketScreenState extends State<TicketScreen> {
           ),
         ] else ...[
           Row(
-            mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              const Icon(Icons.access_time, color: Colors.grey),
+              const Icon(Icons.info),
               const SizedBox(width: 8),
-              Text(
-                'Примерное время: ~${_ticket!.estimatedWaitMin} мин.',
-                style: const TextStyle(fontSize: 16, color: Colors.black87),
+              Expanded(
+                child: Text(
+                  'Примерное время: ~${_ticket!.estimatedWaitMin} мин.',
+                  overflow: TextOverflow.ellipsis,
+                  maxLines: 1,
+                ),
               ),
             ],
-          ),
+          )
         ],
         const SizedBox(height: 24),
-        if (_ticket!.status == 'WAITING')
+
+        if (_ticket!.status.toUpperCase() == 'SCHEDULED') ...[
+          SizedBox(
+            width: double.infinity,
+            height: 48,
+            child: ElevatedButton.icon(
+              onPressed: _isActivating ? null : _handleActivate,
+              icon: _isActivating
+                  ? const SizedBox(
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2),
+                    )
+                  : const Icon(Icons.check_circle_outline, color: Colors.white),
+              label: const Text(
+                'Я в отделении',
+                style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold),
+              ),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF0055A5),
+              ),
+            ),
+          ),
+          const SizedBox(height: 12),
+        ],
+
+        // === КНОПКА ОТМЕНЫ ЗАПИСИ ===
+        if (_ticket!.status == 'WAITING' || 
+            _ticket!.status.toLowerCase() == 'scheduled')
           OutlinedButton(
             onPressed: _isCancelling ? null : _handleCancel,
             style: OutlinedButton.styleFrom(
